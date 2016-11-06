@@ -1,0 +1,20 @@
+%% -*- mode: erlang -*-
+%% -*- tab-width: 4;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+%% ex: ts=4 sw=4 et
+
+%%%------------------------------------------------------------------------------
+%%% @copyright (c) 2016, DuoMark International, Inc. All Rights Reserved.
+%%% @author Jay Nelson <jay@duomark.com>
+%%%------------------------------------------------------------------------------
+
+{application, esse,
+ [
+  {description, "Essential Erlang Server Sent Event (SSE) Tools"},
+  {vsn,  "1.0.0"},
+  {mod,  {esse_app,   []}},
+
+  {applications, [kernel, stdlib]},
+  {registered,   [esse_sup]},
+  {modules,      [esse_app, esse_sup]}
+ ]
+}.
