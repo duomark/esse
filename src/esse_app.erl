@@ -1,5 +1,5 @@
 %%%------------------------------------------------------------------------------
-%%% @copyright (c) 2016, DuoMark International, Inc.
+%%% @copyright (c) 2016-2017, DuoMark International, Inc.
 %%% @author Jay Nelson <jay@duomark.com>
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
@@ -11,7 +11,7 @@
 %%%   for supervisor specification, and can take advantage of
 %%%   any of the new optimizations.
 %%%
-%%% @since v0.0.1
+%%% @since v0.1.0
 %%% @end
 %%%------------------------------------------------------------------------------
 -module(esse_app).
