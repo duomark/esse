@@ -4,12 +4,12 @@
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
-%%%   Library functions for creating events to send.
+%%%   Library functions for creating events to send to user_agents.
 %%%
 %%% @since v0.1.0
 %%% @end
 %%%------------------------------------------------------------------------------
--module(esse_event).
+-module(esse_out).
 -author('Jay Nelson <jay@duomark.com>').
 
 %%% External API
