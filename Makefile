@@ -1,6 +1,15 @@
-PROJECT = esse
+### Copyright (c) 2016-2017, DuoMark International, Inc. All Rights Reserved.
+### Author Jay Nelson <jay@duomark.com>
+
+### Project name and version are defined by relx.config line:
+### {release, {tokenizer_backend, 1.1.0}, [tokenizer_backend]}
+PROJECT_AWK := awk '/^{release,/ {sub(/^{release, {/,       ""); sub(/,.*/,  ""); print}'
+VERSION_AWK := awk '/^{release,/ {sub(/^{release, [^ ]+ "/, ""); sub(/\".*/, ""); print}'
+
+PROJECT         := $(shell ${PROJECT_AWK} <relx.config)
+PROJECT_VERSION := $(shell ${VERSION_AWK} <relx.config)
 PROJECT_DESCRIPTION = Essential Erlang SSE
-PROJECT_VERSION = 0.1.0
+
 HOST := `hostname`
 ROOT := $(shell pwd)
 
