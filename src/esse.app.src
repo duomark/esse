@@ -3,18 +3,21 @@
 %% ex: ts=4 sw=4 et
 
 %%%------------------------------------------------------------------------------
-%%% @copyright (c) 2016, DuoMark International, Inc. All Rights Reserved.
+%%% @copyright (c) 2016-2017, DuoMark International, Inc. All Rights Reserved.
 %%% @author Jay Nelson <jay@duomark.com>
 %%%------------------------------------------------------------------------------
 
 {application, esse,
  [
   {description, "Essential Erlang Server Sent Event (SSE) Tools"},
-  {vsn,  "1.0.0"},
+  {vsn,  "0.1.0"},
   {mod,  {esse_app,   []}},
 
   {applications, [kernel, stdlib]},
   {registered,   [esse_sup]},
-  {modules,      [esse_app, esse_sup]}
+  {modules,      [
+                  esse_app, esse_sup, esse_out,
+                  esse_listener, esse_listener_sup
+                 ]}
  ]
 }.

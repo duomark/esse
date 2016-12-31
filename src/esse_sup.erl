@@ -1,12 +1,12 @@
 %%%------------------------------------------------------------------------------
-%%% @copyright (c) 2016, DuoMark International, Inc.
+%%% @copyright (c) 2016-2017, DuoMark International, Inc.
 %%% @author Jay Nelson <jay@duomark.com>
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
 %%%   Main supervisor controls the SSE process connection cxy_fount.
 %%%
-%%% @since v0.0.1
+%%% @since v0.1.0
 %%% @end
 %%%------------------------------------------------------------------------------
 -module(esse_sup).
@@ -35,17 +35,10 @@ start_link() ->
 %%%===================================================================
 -spec init({}) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init({}) ->
-    Fount_Options = [{slab_size, 5}, {reservoir_depth, 3}],
-    FMF_Args = {cxy_fount_sup,     start_link, [esse_fount, [{}], Fount_Options ]},
-    LMF_Args = {esse_listener_sup, start_link, [9997, 2]},
-    Sse_Fount_Sup    = supervisor_child(esse_fount_sup,    FMF_Args),
+    LMF_Args         = {esse_listener_sup, start_link, [9997, 3]},
     Sse_Listener_Sup = supervisor_child(esse_listener_sup, LMF_Args),
-
-    Children = [
-                Sse_Fount_Sup,
-                Sse_Listener_Sup
-               ],
-    {ok, { rest_for_one_sup_options(1,5), Children} }.
+    Children         = [Sse_Listener_Sup],
+    {ok, {rest_for_one_sup_options(5,1), Children} }.
 
 rest_for_one_sup_options(Intensity, Period) ->
    #{
