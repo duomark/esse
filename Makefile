@@ -1,6 +1,6 @@
 PROJECT = esse
 PROJECT_DESCRIPTION = Essential Erlang SSE
-PROJECT_VERSION = 0.0.1
+PROJECT_VERSION = 0.1.0
 HOST := `hostname`
 ROOT := $(shell pwd)
 
@@ -9,7 +9,7 @@ SP=4
 
 V = 0
 
-DEPS = epocxy
+DEPS = eper
 
 ERLC_OPTS := +debug_info +"{cover_enabled, true}"
 
@@ -32,5 +32,5 @@ REL_EFLAGS = \
 	-pa ${ROOT_REL}/lib/*/ebin \
 	${CMN_EFLAGS}
 
-run:
+dev:
 	erl ${DEV_EFLAGS} -s esse_app

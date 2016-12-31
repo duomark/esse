@@ -15,6 +15,9 @@
 
   {applications, [kernel, stdlib]},
   {registered,   [esse_sup]},
-  {modules,      [esse_app, esse_sup, esse_event]}
+  {modules,      [
+                  esse_app, esse_sup, esse_out,
+                  esse_listener, esse_listener_sup
+                 ]}
  ]
 }.

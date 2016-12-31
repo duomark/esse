@@ -35,17 +35,10 @@ start_link() ->
 %%%===================================================================
 -spec init({}) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init({}) ->
-    Fount_Options = [{slab_size, 5}, {reservoir_depth, 3}],
-    FMF_Args = {cxy_fount_sup,     start_link, [esse_fount, [{}], Fount_Options ]},
-    LMF_Args = {esse_listener_sup, start_link, [9997, 2]},
-    Sse_Fount_Sup    = supervisor_child(esse_fount_sup,    FMF_Args),
+    LMF_Args         = {esse_listener_sup, start_link, [9997, 3]},
     Sse_Listener_Sup = supervisor_child(esse_listener_sup, LMF_Args),
-
-    Children = [
-                Sse_Fount_Sup,
-                Sse_Listener_Sup
-               ],
-    {ok, { rest_for_one_sup_options(1,5), Children} }.
+    Children         = [Sse_Listener_Sup],
+    {ok, {rest_for_one_sup_options(5,1), Children} }.
 
 rest_for_one_sup_options(Intensity, Period) ->
    #{
