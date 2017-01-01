@@ -16,6 +16,13 @@
 -export([data_only/1, data_event/2, object_event/3]).
 -export([response_headers/1]).
 
+-type id            () ::  binary().
+-type event         () ::  binary().
+-type data          () :: [string()] | [binary()].
+-type sse_out       () ::  iolist()  |  binary().
+
+-export_types([id/0, event/0, data/0]).
+
 -define(CR, 13).
 -define(LF, 10).
 
@@ -64,11 +71,6 @@ make_timestamp() ->
 %%%===================================================================
 %%% Streamed data functions
 %%%===================================================================
-
--type id            () ::  binary().
--type event         () ::  binary().
--type data          () :: [string()] | [binary()].
--type sse_out       () ::  iolist()  |  binary().
 
 -spec data_only    (               [data()]) -> sse_out().
 -spec data_event   (      event(), [data()]) -> sse_out().

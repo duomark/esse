@@ -17,7 +17,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1]).
+-export([start_link/1, send_data_only/2, send_data_event/3, send_object_event/4]).
 
 %% Internally spawned functions
 -export([accept/2]).
@@ -67,9 +67,20 @@ accept(Listen_Socket, Esse_Listener) ->
             ok = gen_server:cast(Esse_Listener, {new_client, Socket});
         {error, _Any} = Err ->
             ok = report_error(Listen_Socket, Esse_Listener, Err),
-            exit(Esse_Listener, {socket_error, Err})
+            error_logger:error_report([{socket_error, {?MODULE, Esse_Listener}, Err}]),
+            exit(Esse_Listener, normal)
+            %% exit(Esse_Listener, {socket_error, Err})
     end.
 
+
+-spec send_data_only    (pid(),                                [sse_out:data()]) -> ok.
+-spec send_data_event   (pid(),               sse_out:event(), [sse_out:data()]) -> ok.
+-spec send_object_event (pid(), sse_out:id(), sse_out:event(), [sse_out:data()]) -> ok.
+
+send_data_only    (Pid,            Data) -> gen_server:cast(Pid, {send_data_only,               Data}).
+send_data_event   (Pid,     Event, Data) -> gen_server:cast(Pid, {send_data_event,       Event, Data}).
+send_object_event (Pid, Id, Event, Data) -> gen_server:cast(Pid, {send_object_event, Id, Event, Data}).
+    
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -80,14 +91,17 @@ accept(Listen_Socket, Esse_Listener) ->
 -spec terminate   (atom(),   el_state())        ->  ok.
 
 init({Listen_Socket}) ->
-    process_flag(trap_exit, true),
+    %% process_flag(trap_exit, true),
     {Pid, Ref} = spawn_monitor(?MODULE, accept, [Listen_Socket, self()]),
     {ok, #el_state{listen_socket=Listen_Socket, accepter_pid=Pid, accepter_mref=Ref}, keep_alive_time()}.
 
 code_change (_OldVsn, State, _Extra) -> {ok, State}.
 
-terminate   ({socket_error, _}, _State) -> ok;
-terminate   (shutdown,          _State) -> ok.
+%%% socket_error is an accepter problem, shutdown when supervisor is quitting.
+terminate (normal, _State) -> ok;
+terminate ({socket_closed, Props}, _State) -> error_logger:info_report  ([socket_closed, {?MODULE, self()} | Props]);
+terminate ({socket_error,  Error}, _State) -> error_logger:error_report ([socket_error,  {?MODULE, self()}, Error]);
+terminate ( shutdown,              _State) -> error_logger:info_report  ([{supervisor_shutdown, ?MODULE}]).
 
 
 %%% All of handle_xxx end with reply/2 or noreply/1 to ensure keep_alive_time() always applies.
@@ -123,6 +137,13 @@ handle_info(Info, #el_state{} = State) ->
 %%% When a client connects, the Socket is saved in the gen_server.
 handle_cast ({new_client, Socket}, #el_state{stream_socket=undefined, start_stream=undefined} = State) ->
     noreply(start_stream(Socket, State));
+
+%%% Other events are sent using sse_out formatting.
+handle_cast ({send_data_only,               Data}, #el_state{} = State) -> send(State, esse_out:data_only    (           Data));
+handle_cast ({send_data_event,       Event, Data}, #el_state{} = State) -> send(State, esse_out:data_event   (    Event, Data));
+handle_cast ({send_object_event, Id, Event, Data}, #el_state{} = State) -> send(State, esse_out:object_event (Id, Event, Data));  
+
+%%% Everything else is logged as unexpected.
 handle_cast (Msg, #el_state{} = State) ->
     error_logger:warning_msg("Unexpected cast ~p~n", [Msg]),
     noreply(State).
@@ -142,12 +163,17 @@ handle_call (Request, From, #el_state{} = State) ->
 start_stream(Socket, #el_state{} = State) ->
     New_State = State#el_state{stream_socket=Socket, start_stream=timestamp()},
     error_logger:info_msg("Starting new client ~p~n", [New_State]),
+   esse_user_agent:receive_request(Socket),
     ok = gen_tcp:send(Socket, esse_out:response_headers(ok)),
     New_State.
 
 %%% Send a ':' on the socket stream, but stop if there is no client receiving or an error.
-keep_alive(#el_state{stream_socket=Socket} = State) ->
-    case gen_tcp:send(Socket, <<":">>) of
+keep_alive(#el_state{} = State) -> send(State, <<":">>).
+
+%%% Send an SSE event on the open Socket.
+send(#el_state{stream_socket=undefined} = State, _Sse_Data) -> noreply(State);
+send(#el_state{stream_socket=Socket}    = State,  Sse_Data) ->
+    case gen_tcp:send(Socket, Sse_Data) of
         {error, timeout} -> close(Socket, timeout, State);
         {error, Reason}  -> close(Socket, Reason,  State);
         ok               -> noreply(State)
@@ -162,9 +188,12 @@ close(Socket, Reason, #el_state{num_items_sent=Num_Sent, start_stream=Start_Stre
              {start_time,         Start_Stream_Time},
              {stop_time,          Stop_Stream_Time},
              {num_items_sent,     Num_Sent}],
-    {stop, Props, New_State}.
+    error_logger:info_report(Props),
+    {stop, normal, New_State}.
     
-accepter_exit(MPid, {socket_error, _} = Err, #el_state{accepter_pid=MPid}) -> exit(Err).
+accepter_exit(MPid, {socket_error, Error}, #el_state{accepter_pid=MPid}) ->
+    error_logger:error_report([{socket_error, {?MODULE, self()}, Error}]),
+    exit(normal).
 
 accepter_down(MRef, MPid, #el_state{accepter_mref=MRef, accepter_pid=MPid} = State) ->
     State#el_state{accepter_mref=undefined, accepter_pid=undefined}.

@@ -4,11 +4,10 @@
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
-%%%   Simple_one_for_one supervisor which launches as many transient
+%%%   Simple_one_for_one supervisor which launches as many permanent
 %%%   child client SSE acceptor workers as is specified by the Max
-%%%   Acceptors. Any worker that does not end with 'normal' or
-%%%   'shutdown' will be relaunched in the initial state accepting
-%%%   connections.
+%%%   Acceptors. Any worker that terminates will be relaunched in
+%%%   the initial state accepting connections.
 %%%
 %%% @since v0.1.0
 %%% @end
@@ -77,7 +76,7 @@ worker_child(Id, {_M, _F, _A} = Start) ->
     #{
        id      =>  Id,
        start   =>  Start,
-       restart =>  transient,
+       restart =>  permanent,
        type    =>  worker,
        modules => [_M]
      }.

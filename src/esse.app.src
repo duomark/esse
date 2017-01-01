@@ -17,7 +17,8 @@
   {registered,   [esse_sup]},
   {modules,      [
                   esse_app, esse_sup, esse_out,
-                  esse_listener, esse_listener_sup
+                  esse_listener, esse_listener_sup,
+                  esse_user_agent
                  ]}
  ]
 }.
