@@ -35,9 +35,9 @@ start_link() ->
 %%%===================================================================
 -spec init({}) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init({}) ->
-    LMF_Args         = {esse_listener_sup, start_link, [9997, 3]},
-    Sse_Listener_Sup = supervisor_child(esse_listener_sup, LMF_Args),
-    Children         = [Sse_Listener_Sup],
+    Sse_Session_Mgr  = worker_child     ( esse_session_mgr,  start_link, []        ),
+    Sse_Listener_Sup = supervisor_child ( esse_listener_sup, start_link, [9997, 3] ),
+    Children         = [Sse_Session_Mgr, Sse_Listener_Sup],
     {ok, {rest_for_one_sup_options(5,1), Children} }.
 
 rest_for_one_sup_options(Intensity, Period) ->
@@ -47,9 +47,19 @@ rest_for_one_sup_options(Intensity, Period) ->
       period    => Period         % Within this many seconds
     }.
 
-supervisor_child(Id, {_M, _F, _A} = Start) ->
+supervisor_child(Mod, Fun, Args) ->
     #{
-       id    => Id,
-       start => Start,
-       type  => supervisor
+       id      =>  Mod,
+       start   => {Mod, Fun, Args},
+       type    =>  supervisor,
+       modules => [Mod]
+     }.
+
+worker_child(Mod, Fun, Args) ->
+    #{
+       id      =>  Mod,
+       start   => {Mod, Fun, Args},
+       restart =>  permanent,
+       type    =>  worker,
+       modules => [Mod]
      }.

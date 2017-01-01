@@ -33,7 +33,10 @@
 
 start_link(Port, Max_Acceptors) ->
     {ok, Pid} = supervisor:start_link({local, ?MODULE}, ?MODULE, {Port}),
+
+    %% Simple_one_for_one permanent max number of acceptor workers.
     _ = [start_child(Pid) || _ <- lists:seq(1, Max_Acceptors)],
+
     {ok, Pid}.
     
 start_child(Pid) ->
@@ -61,8 +64,7 @@ listen(Port) ->
 
 init({Port}) ->
     Listen_Socket = listen(Port),
-    LMF_Args = {esse_listener, start_link, [Listen_Socket]},
-    Listener = worker_child(esse_listener, LMF_Args),
+    Listener      = worker_child(esse_listener, start_link, [Listen_Socket]),
     {ok, {simple_one_for_one_sup_options(5,1), [Listener]} }.
 
 simple_one_for_one_sup_options(Intensity, Period) ->
@@ -72,11 +74,11 @@ simple_one_for_one_sup_options(Intensity, Period) ->
       period    => Period         % Within this many seconds
     }.
 
-worker_child(Id, {_M, _F, _A} = Start) ->
+worker_child(Mod, Fun, Args) ->
     #{
-       id      =>  Id,
-       start   =>  Start,
+       id      =>  Mod,
+       start   => {Mod, Fun, Args},
        restart =>  permanent,
        type    =>  worker,
-       modules => [_M]
+       modules => [Mod]
      }.

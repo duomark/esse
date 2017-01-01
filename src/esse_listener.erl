@@ -1,3 +1,4 @@
+
 %%%------------------------------------------------------------------------------
 %%% @copyright (c) 2016-2017, DuoMark International, Inc.
 %%% @author Jay Nelson <jay@duomark.com>
@@ -31,6 +32,7 @@
           num_items_sent = 0           :: pos_integer(),
           accepter_pid                 :: pid()            | undefined,
           accepter_mref                :: reference()      | undefined,
+          session_id     = undefined   :: uuid:uuid()      | undefined,
           stream_socket  = undefined   :: gen_tcp:socket() | undefined,
           start_stream   = undefined   :: pos_integer()    | undefined,
           stop_stream    = undefined   :: pos_integer()    | undefined,
@@ -66,10 +68,8 @@ accept(Listen_Socket, Esse_Listener) ->
             ok = gen_tcp:controlling_process(Socket, Esse_Listener),
             ok = gen_server:cast(Esse_Listener, {new_client, Socket});
         {error, _Any} = Err ->
-            ok = report_error(Listen_Socket, Esse_Listener, Err),
             error_logger:error_report([{socket_error, {?MODULE, Esse_Listener}, Err}]),
             exit(Esse_Listener, normal)
-            %% exit(Esse_Listener, {socket_error, Err})
     end.
 
 
@@ -91,17 +91,11 @@ send_object_event (Pid, Id, Event, Data) -> gen_server:cast(Pid, {send_object_ev
 -spec terminate   (atom(),   el_state())        ->  ok.
 
 init({Listen_Socket}) ->
-    %% process_flag(trap_exit, true),
     {Pid, Ref} = spawn_monitor(?MODULE, accept, [Listen_Socket, self()]),
     {ok, #el_state{listen_socket=Listen_Socket, accepter_pid=Pid, accepter_mref=Ref}, keep_alive_time()}.
 
 code_change (_OldVsn, State, _Extra) -> {ok, State}.
-
-%%% socket_error is an accepter problem, shutdown when supervisor is quitting.
-terminate (normal, _State) -> ok;
-terminate ({socket_closed, Props}, _State) -> error_logger:info_report  ([socket_closed, {?MODULE, self()} | Props]);
-terminate ({socket_error,  Error}, _State) -> error_logger:error_report ([socket_error,  {?MODULE, self()}, Error]);
-terminate ( shutdown,              _State) -> error_logger:info_report  ([{supervisor_shutdown, ?MODULE}]).
+terminate   (normal, _State)         ->  ok.
 
 
 %%% All of handle_xxx end with reply/2 or noreply/1 to ensure keep_alive_time() always applies.
@@ -123,9 +117,7 @@ terminate ( shutdown,              _State) -> error_logger:info_report  ([{super
 handle_info(timeout, #el_state{start_stream=undefined} = State) -> noreply    (State);
 handle_info(timeout,                       #el_state{} = State) -> keep_alive (State);  % Stops if TCP closed.
 
-%%% 'EXIT' message arrives when the Socket Accepter encounters and error waiting for an accept.
 %%% Monitor 'DOWN' message arrives when the Socket Accepter terminates.
-handle_info({'EXIT', From, {socket_error, _} = Err},#el_state{} = State) -> noreply(accepter_exit(From, Err,  State));
 handle_info({'DOWN', MRef, process, MPid, normal},  #el_state{} = State) -> noreply(accepter_down(MRef, MPid, State));
 
 %%% Ignore all other info requests else.
@@ -135,8 +127,7 @@ handle_info(Info, #el_state{} = State) ->
 
 
 %%% When a client connects, the Socket is saved in the gen_server.
-handle_cast ({new_client, Socket}, #el_state{stream_socket=undefined, start_stream=undefined} = State) ->
-    noreply(start_stream(Socket, State));
+handle_cast ({new_client, Socket}, #el_state{stream_socket=undefined, start_stream=undefined} = State) -> start_stream(Socket, State);
 
 %%% Other events are sent using sse_out formatting.
 handle_cast ({send_data_only,               Data}, #el_state{} = State) -> send(State, esse_out:data_only    (           Data));
@@ -161,11 +152,13 @@ handle_call (Request, From, #el_state{} = State) ->
 
 %%% Save the socket, send the HTTP/1.1 stream headers, then return the new state.
 start_stream(Socket, #el_state{} = State) ->
-    New_State = State#el_state{stream_socket=Socket, start_stream=timestamp()},
+    Session_Id = uuid:get_v4(),
+    New_State = State#el_state{stream_socket=Socket, start_stream=timestamp(), session_id=Session_Id},
     error_logger:info_msg("Starting new client ~p~n", [New_State]),
-   esse_user_agent:receive_request(Socket),
+    esse_user_agent:receive_request(Socket),
     ok = gen_tcp:send(Socket, esse_out:response_headers(ok)),
-    New_State.
+    ets:insert_new(esse_sessions, {Session_Id, self()}),
+    send(New_State, esse_out:data_event(<<"new_session_id">>, [uuid:uuid_to_string(Session_Id)])).
 
 %%% Send a ':' on the socket stream, but stop if there is no client receiving or an error.
 keep_alive(#el_state{} = State) -> send(State, <<":">>).
@@ -179,29 +172,58 @@ send(#el_state{stream_socket=Socket}    = State,  Sse_Data) ->
         ok               -> noreply(State)
     end.
 
-close(Socket, Reason, #el_state{num_items_sent=Num_Sent, start_stream=Start_Stream_Time} = State) ->
+close(Socket, Reason, #el_state{session_id=Session_Id, num_items_sent=Num_Sent, start_stream=Start_Stream_Time} = State) ->
+    ets:delete(esse_sessions, Session_Id),
     ok = gen_tcp:close(Socket),
     Stop_Stream_Time = timestamp(),
-    New_State = State#el_state{stream_socket=undefined, stop_stream=Stop_Stream_Time},
+    New_State = State#el_state{session_id=undefined, stream_socket=undefined, stop_stream=Stop_Stream_Time},
     Props = [{sse_socket,         Socket},
              {termination_reason, Reason},
-             {start_time,         Start_Stream_Time},
-             {stop_time,          Stop_Stream_Time},
+             {start_time,         calendar_time(Start_Stream_Time)},
+             {stop_time,          calendar_time(Stop_Stream_Time)},
+             {session_id,         uuid:uuid_to_string(Session_Id)},
              {num_items_sent,     Num_Sent}],
     error_logger:info_report(Props),
     {stop, normal, New_State}.
-    
-accepter_exit(MPid, {socket_error, Error}, #el_state{accepter_pid=MPid}) ->
-    error_logger:error_report([{socket_error, {?MODULE, self()}, Error}]),
-    exit(normal).
 
 accepter_down(MRef, MPid, #el_state{accepter_mref=MRef, accepter_pid=MPid} = State) ->
     State#el_state{accepter_mref=undefined, accepter_pid=undefined}.
 
 reply   (Reply, New_State) -> {reply, Reply, New_State, keep_alive_time()}.
 noreply (       New_State) -> {noreply,      New_State, keep_alive_time()}.
-    
-report_error(LS, Pid, {error, closed})       -> error_logger:error_msg("Listen socket ~p closed for ~p~n",       [LS, Pid]);
-report_error(LS, Pid, {error, timeout})      -> error_logger:error_msg("Listen socket ~p timed out for ~p~n",    [LS, Pid]);
-report_error(LS, Pid, {error, system_limit}) -> error_logger:error_msg("Listen socket ~p no ports for ~p~n",     [LS, Pid]);
-report_error(LS, Pid, {error, Reason})       -> error_logger:error_msg("Listen socket ~p for ~p got error ~p~n", [LS, Pid, Reason]).
+
+
+%%%===================================================================
+%%% Date hack copied from OTP docs and error_logger.
+%%%===================================================================
+
+%%% From system_time documentation
+calendar_time(System_Time) ->
+    MegaSecs  = System_Time div 1000000000000,
+    Secs      = System_Time div 1000000 - MegaSecs*1000000,
+    MicroSecs = System_Time rem 1000000,
+    Cal_Time  = calendar:now_to_universal_time({MegaSecs, Secs, MicroSecs}),
+    display_date(Cal_Time, MicroSecs).
+
+%%% From error_logger, but modified to RFC8601 (without using io:format)
+display_date({{Y,Mo,D},{H,Mi,S}}, Micros) ->
+    integer_to_list(Y) ++ "-" ++
+        two_digits(Mo) ++ "-" ++
+        two_digits(D)  ++ "T" ++
+        two_digits(H)  ++ ":" ++
+        two_digits(Mi) ++ ":" ++
+        two_digits(S)  ++ "." ++
+        six_digits(Micros) ++ "Z".
+
+two_digits(N) when 0 =< N, N =< 9 ->
+    [$0, $0 + N];
+two_digits(N) ->
+    integer_to_list(N).
+
+six_digits(N) when      0 =< N, N =<     9 -> [$0, $0, $0, $0, $0,         $0 + N ];
+six_digits(N) when     10 =< N, N =<    99 -> [$0, $0, $0, $0 | integer_to_list(N)];
+six_digits(N) when    100 =< N, N =<   999 -> [$0, $0, $0     | integer_to_list(N)];
+six_digits(N) when   1000 =< N, N =<  9999 -> [$0, $0         | integer_to_list(N)];
+six_digits(N) when  10000 =< N, N =< 99999 -> [$0             | integer_to_list(N)];
+six_digits(N)                              -> integer_to_list(N).
+
