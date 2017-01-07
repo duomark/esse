@@ -14,7 +14,7 @@
   {mod,  {esse_app,   []}},
 
   {applications,          [kernel, stdlib]},
-  {included_applications, [uuid]},
+  {included_applications, [jsone, uuid]},
 
   {registered,   [esse_sup]},
   {modules,      [

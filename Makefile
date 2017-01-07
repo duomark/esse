@@ -18,8 +18,9 @@ SP=4
 
 V = 0
 
-DEPS = eper uuid
+DEPS = eper jsone uuid
 
+dep_jsone_commit = 1.4.0
 dep_uuid_commit  = v1.5.4
 
 
