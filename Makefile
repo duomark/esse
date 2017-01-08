@@ -2,13 +2,13 @@
 ### Author Jay Nelson <jay@duomark.com>
 
 ### Project name and version are defined by relx.config line:
-### {release, {tokenizer_backend, 1.1.0}, [tokenizer_backend]}
+### {release, {esse, 0.2.0}, [esse]}
 PROJECT_AWK := awk '/^{release,/ {sub(/^{release, {/,       ""); sub(/,.*/,  ""); print}'
 VERSION_AWK := awk '/^{release,/ {sub(/^{release, [^ ]+ "/, ""); sub(/\".*/, ""); print}'
 
 PROJECT         := $(shell ${PROJECT_AWK} <relx.config)
 PROJECT_VERSION := $(shell ${VERSION_AWK} <relx.config)
-PROJECT_DESCRIPTION = Essential Erlang SSE
+PROJECT_DESCRIPTION = Essential Erlang Server Sent Events (SSE)
 
 HOST := `hostname`
 ROOT := $(shell pwd)
