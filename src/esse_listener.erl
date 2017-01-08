@@ -43,7 +43,7 @@
 
 %%% Timestamp for start_listen and start_stream
 timestamp() ->
-    erlang:system_time(milli_seconds).
+    erlang:system_time(microsecond).
 
 %%% Period at which ":" is sent to keep SSE stream active,
 %%% Perturbed randomly to avoid thundering herds of timeouts.
@@ -242,7 +242,7 @@ noreply (       New_State) -> {noreply,      New_State, keep_alive_time()}.
 %%% Date hack copied from OTP docs and error_logger.
 %%%===================================================================
 
-%%% From system_time documentation
+%%% From erts erlang:timestamp/0 documentation
 calendar_time(undefined)   -> "unknown";
 calendar_time(System_Time) ->
     MegaSecs  = System_Time div 1000000000000,
