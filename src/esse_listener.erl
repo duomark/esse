@@ -28,6 +28,7 @@
 
 -record(el_state, {
           listen_socket                :: gen_tcp:socket(),
+          num_bytes_sent = 0           :: pos_integer(),
           num_items_sent = 0           :: pos_integer(),
           num_pings_sent = 0           :: pos_integer(),
           accepter_pid                 :: pid()            | undefined,
@@ -173,8 +174,9 @@ format_state(#el_state{listen_socket=LS, start_listen=SLS,   accepter_pid=AP, ac
      {listen_socket,  format_listen_socket (LS, SLS, AP, AM)},
      {stream_socket,  format_stream_socket (SS, Start, Stop)},
      {session_id,     format_session_id    (S#el_state.session_id)},
-     {num_items_sent, S#el_state.num_items_sent},
-     {num_pings_sent, S#el_state.num_pings_sent}
+     {num_bytes_sent, S#el_state.num_bytes_sent},  % Excluding pings
+     {num_items_sent, S#el_state.num_items_sent},  % Count of successful send/2 calls
+     {num_pings_sent, S#el_state.num_pings_sent}   % Assume 1 byte per ping
     ].
 
 format_listen_socket(Socket, Start, undefined,  undefined)   -> {Socket, {started_listening, calendar_time(Start)}};
@@ -212,16 +214,18 @@ start_stream(Socket, #el_state{} = State) ->
 keep_alive(#el_state{} = State) -> send(State, <<":">>).
 
 %%% Send an SSE event on the open Socket.
-send(#el_state{stream_socket=undefined}                                    = State, _Sse_Data) -> noreply(State);
-send(#el_state{stream_socket=Socket, num_items_sent=NI, num_pings_sent=NP} = State,  Sse_Data) ->
+send(#el_state{stream_socket=undefined} = State, _Sse_Data) -> noreply(State);
+send(#el_state{stream_socket=Socket}    = State,  Sse_Data) ->
     case gen_tcp:send(Socket, Sse_Data) of
         {error, timeout} -> close(Socket, timeout, State);
         {error, Reason}  -> close(Socket, Reason,  State);
-        ok               -> noreply(case Sse_Data of
-                                        <<":">> -> State#el_state{num_pings_sent=NP+1};
-                                        _Event  -> State#el_state{num_items_sent=NI+1}
-                                    end)
+        ok               -> noreply(accum_send_stats(Sse_Data, State))
     end.
+
+accum_send_stats(<<":">>,  #el_state{num_pings_sent=NP} = State) ->
+    State#el_state{num_pings_sent=NP+1};
+accum_send_stats(Sse_Data, #el_state{num_items_sent=NI, num_bytes_sent=NB} = State) ->
+    State#el_state{num_items_sent=NI+1, num_bytes_sent=NB+iolist_size(Sse_Data)}.
 
 close(Socket, Reason, #el_state{session_id=Session_Id} = State0) ->
     State = State0#el_state{stop_stream=timestamp()},
