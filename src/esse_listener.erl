@@ -26,6 +26,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
 
+-type peername() :: {inet:ip_address(), inet:port_number()}.
 -record(el_state, {
           listen_socket                :: gen_tcp:socket(),
           num_bytes_sent = 0           :: pos_integer(),
@@ -33,6 +34,7 @@
           num_pings_sent = 0           :: pos_integer(),
           accepter_pid                 :: pid()            | undefined,
           accepter_mref                :: reference()      | undefined,
+          peername       = undefined   :: peername()       | undefined,
           session_id     = undefined   :: uuid:uuid()      | undefined,
           stream_socket  = undefined   :: gen_tcp:socket() | undefined,
           start_stream   = undefined   :: pos_integer()    | undefined,
@@ -154,7 +156,7 @@ handle_call (Request, From, #el_state{} = State) ->
 %%%===================================================================
 -type run_state() :: normal | terminate.
 -type pdict()     :: [{any(), any()}].   % Key/Value process dictionary as a list
--type status()    :: [{data, [{string(), {session_id, string()}}]}].
+-type status()    :: [{data, [{string(), proplists:proplist()}]}].
 -spec format_status(status(), [pdict() | el_state()]) -> status().
 
 format_status(_Run_State, [PDict0, #el_state{} = State0]) ->
@@ -174,18 +176,22 @@ format_state(#el_state{listen_socket=LS, start_listen=SLS,   accepter_pid=AP, ac
      {listen_socket,  format_listen_socket (LS, SLS, AP, AM)},
      {stream_socket,  format_stream_socket (SS, Start, Stop)},
      {session_id,     format_session_id    (S#el_state.session_id)},
+     {peername,       S#el_state.peername},
      {num_bytes_sent, S#el_state.num_bytes_sent},  % Excluding pings
      {num_items_sent, S#el_state.num_items_sent},  % Count of successful send/2 calls
      {num_pings_sent, S#el_state.num_pings_sent}   % Assume 1 byte per ping
     ].
 
-format_listen_socket(Socket, Start, undefined,  undefined)   -> {Socket, {started_listening, calendar_time(Start)}};
-format_listen_socket(Socket, Start, Accept_Pid, Accept_Mref) -> {Socket, {started_listening, calendar_time(Start)},
-                                                                 {accepter, {Accept_Pid, Accept_Mref}}}.
+format_listen_socket(Socket, Start, undefined,  undefined)   -> {Socket, calendar_time(Start)};
+format_listen_socket(Socket, Start, Accept_Pid, Accept_Mref) -> {Socket, calendar_time(Start),
+                                                                 format_accepter(Accept_Pid, Accept_Mref)}.
 
-format_stream_socket(undefined, _,     _) -> none;
-format_stream_socket(Socket, Start, Stop) -> {Socket, calendar_time(Start), calendar_time(Stop)}.
-    
+format_accepter(Pid, Mref) -> {accepter, {Pid, Mref}}.
+
+format_stream_socket(undefined,     _,         _) -> none;
+format_stream_socket(Socket,    Start, undefined) -> {Socket, calendar_time(Start), "active"};
+format_stream_socket(Socket,    Start,      Stop) -> {Socket, calendar_time(Start), calendar_time(Stop)}.
+
 format_session_id(undefined) -> none;
 format_session_id(Sid)       -> uuid:uuid_to_string(Sid).
 
@@ -196,9 +202,14 @@ format_session_id(Sid)       -> uuid:uuid_to_string(Sid).
 
 %%% Save the socket, send the HTTP/1.1 stream headers, then return the new state.
 start_stream(Socket, #el_state{} = State) ->
-    Session_Id = uuid:get_v4(),
-    New_State = State#el_state{stream_socket=Socket, start_stream=timestamp(), session_id=Session_Id},
-    error_logger:info_msg("Socket connected to ~p as new client ~p~n", [self(), New_State]),
+    Session_Id      = uuid:get_v4(),
+    {ok, Peername}  = inet:peername(Socket),
+    Start_Time      = timestamp(),
+    New_State = State#el_state{stream_socket=Socket,  start_stream=Start_Time,
+                               session_id=Session_Id, peername=Peername},
+    error_logger:info_msg("New session ~s connected to ~p from ~p at ~p",
+                          [format_session_id(Session_Id), self(),
+                           Peername, calendar_time(Start_Time)]),
     case esse_user_agent:receive_request(Socket) of
         {error, _Reason} = Err ->
             error_logger:error_msg("Error receiving: ~p~n", [Err]),
@@ -206,9 +217,12 @@ start_stream(Socket, #el_state{} = State) ->
         #{} = Headers ->
             error_logger:info_msg("Got headers:~n~p~n", [Headers]),
             ok = gen_tcp:send(Socket, esse_out:response_headers(ok)),
-            ets:insert_new(esse_sessions, {Session_Id, self()}),
-            send(New_State, esse_out:data_event(<<"new_session_id">>, [uuid:uuid_to_string(Session_Id)]))
+            ets:insert_new(esse_sessions, {Session_Id, self(), Peername}),
+            send(New_State, notify_session_id_event(Session_Id))
     end.
+
+notify_session_id_event(Session_Id) ->
+    esse_out:data_event(<<"new_session_id">>, [format_session_id(Session_Id)]).
 
 %%% Send a ':' on the socket stream, but stop if there is no client receiving or an error.
 keep_alive(#el_state{} = State) -> send(State, <<":">>).
@@ -232,7 +246,8 @@ close(Socket, Reason, #el_state{session_id=Session_Id} = State0) ->
     ets:delete(esse_sessions, Session_Id),
     ok = gen_tcp:close(Socket),
     error_logger:info_report([{termination_reason, Reason} | format_state(State)]),
-    {stop, normal, State#el_state{session_id=undefined, stream_socket=undefined}}.
+    Cleared_State = State#el_state{session_id=undefined, stream_socket=undefined, peername=undefined},
+    {stop, normal, Cleared_State}.
 
 accepter_down(MRef, MPid, #el_state{accepter_mref=MRef, accepter_pid=MPid} = State) ->
     %% error_logger:info_msg("Accepter down ~p ~p", [MRef, MPid]),
