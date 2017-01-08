@@ -1,0 +1,11 @@
+<html>
+<head>
+  <title>Event Source Example</title>
+  <script>
+    var source = new EventSource('http://localhost:9997/abc');
+    source.addEventListener('message', function (event) {console.log(event.data)}, false);
+  </script>
+</head>
+<body>
+</body>
+</html>

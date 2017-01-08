@@ -13,11 +13,15 @@
   {vsn,  "0.1.1"},
   {mod,  {esse_app,   []}},
 
-  {applications, [kernel, stdlib]},
+  {applications,          [kernel, stdlib]},
+  {included_applications, [jsone, uuid]},
+
   {registered,   [esse_sup]},
   {modules,      [
                   esse_app, esse_sup, esse_out,
-                  esse_listener, esse_listener_sup
+                  esse_listener, esse_listener_sup,
+                  esse_session_mgr,
+                  esse_user_agent
                  ]}
  ]
 }.
