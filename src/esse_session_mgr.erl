@@ -43,8 +43,9 @@ start_link() ->
 -spec code_change (string(), state(), any()) -> {ok, state()}.
 -spec terminate   (atom(),   state())        ->  ok.
 
+%%% Publicly named table containing record instances.
 ets_options() ->
-    [public, set, named_table, {keypos, 1}, {read_concurrency, true}].
+    [public, set, named_table, {keypos, 2}, {read_concurrency, true}].
 
 init({}) ->
     esse_sessions = ets:new(esse_sessions, ets_options()),
