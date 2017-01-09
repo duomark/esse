@@ -52,14 +52,14 @@ terminate_child(Pid) ->
 
 %%% Send timeout is < 5 seconds to avoid gen_server crashing.
 listen_options() ->
-    [binary, {packet, raw}, {active, false},
-     {reuseaddr, true},     {send_timeout, timer:seconds(3)}].
+    [binary, {packet, raw}, {active, false}, {reuseaddr, true},
+     {send_timeout, timer:seconds(3)}].
 
 listen(Port) ->
     {ok, Listen_Socket} = gen_tcp:listen(Port, listen_options()),
     Listen_Socket.
 
--spec init({port(), pos_integer()})
+-spec init({non_neg_integer()})
           -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 
 init({Port}) ->

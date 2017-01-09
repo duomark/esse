@@ -23,6 +23,7 @@ DEPS = eper jsone uuid
 dep_jsone_commit = 1.4.0
 dep_uuid_commit  = v1.5.4
 
+PLT_APPS = crypto
 
 ERLC_OPTS := +debug_info +"{cover_enabled, true}"
 

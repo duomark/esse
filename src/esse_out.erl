@@ -16,12 +16,12 @@
 -export([data_only/1, data_event/2, object_event/3]).
 -export([response_headers/1]).
 
--type id            () ::  binary().
--type event         () ::  binary().
--type data          () :: [string()] | [binary()].
--type sse_out       () ::  iolist()  |  binary().
+-type id            () :: binary().
+-type event         () :: binary().
+-type data          () :: binary() | string().
+-type sse_out       () :: iodata().
 
--export_types([id/0, event/0, data/0]).
+-export_type([id/0, event/0, data/0]).
 
 -define(CR, 13).
 -define(LF, 10).

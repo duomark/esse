@@ -19,7 +19,8 @@
 %% API
 -export([start_link/1,
          send_data_only/2, send_data_event/3, send_object_event/4,
-         get_pid_for_session/1
+         get_pid_for_session/1,
+         get_status/1
         ]).
 
 
@@ -41,16 +42,16 @@
           
 -record(el_state, {
           listen_socket                :: gen_tcp:socket(),
-          num_bytes_sent = 0           :: pos_integer(),
-          num_items_sent = 0           :: pos_integer(),
-          num_pings_sent = 0           :: pos_integer(),
-          accepter_pid                 :: pid()            | undefined,
-          accepter_mref                :: reference()      | undefined,
-          peername       = undefined   :: peername()       | undefined,
-          session_id     = undefined   :: session_id()     | undefined,
-          stream_socket  = undefined   :: gen_tcp:socket() | undefined,
-          start_stream   = undefined   :: pos_integer()    | undefined,
-          stop_stream    = undefined   :: pos_integer()    | undefined,
+          num_bytes_sent = 0           :: non_neg_integer(),
+          num_items_sent = 0           :: non_neg_integer(),
+          num_pings_sent = 0           :: non_neg_integer(),
+          accepter_pid                 :: pid()              | undefined,
+          accepter_mref                :: reference()        | undefined,
+          peername       = undefined   :: peername()         | undefined,
+          session_id     = undefined   :: session_id()       | undefined,
+          stream_socket  = undefined   :: gen_tcp:socket()   | undefined,
+          start_stream   = undefined   :: pos_integer()      | undefined,
+          stop_stream    = undefined   :: pos_integer()      | undefined,
           start_listen   = timestamp() :: pos_integer()
          }).
 
@@ -90,9 +91,9 @@ accept(Listen_Socket, Esse_Listener) ->
 
 
 -type active_id() :: pid() | session_id() | nonempty_string().
--spec send_data_only    (active_id(),                                [sse_out:data()]) -> ok.
--spec send_data_event   (active_id(),               sse_out:event(), [sse_out:data()]) -> ok.
--spec send_object_event (active_id(), sse_out:id(), sse_out:event(), [sse_out:data()]) -> ok.
+-spec send_data_only    (active_id(),                                  [esse_out:data()]) -> ok.
+-spec send_data_event   (active_id(),                esse_out:event(), [esse_out:data()]) -> ok.
+-spec send_object_event (active_id(), esse_out:id(), esse_out:event(), [esse_out:data()]) -> ok.
 
 send_data_only(Pid, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_only, Data});
 send_data_only(Sid, Data)                  -> send_data_only(get_pid_for_session(Sid), Data).
@@ -112,11 +113,17 @@ get_pid_for_session(Session_Id) when is_binary(Session_Id) ->
     ets:lookup_element(esse_sessions, Session_Id, #session.pid).
 
 
+-spec get_status(active_id()) -> proplists:proplist().
+
+get_status(Pid) when is_pid(Pid) -> gen_server:call(Pid, get_status);
+get_status(Sid)                  -> get_status(get_pid_for_session(Sid)).
+   
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init        ({gen_tcp:socket()})          -> {ok, el_state()}.
+-spec init        ({gen_tcp:socket()})          -> {ok, el_state(), pos_integer()}.
 -spec code_change (string(), el_state(), any()) -> {ok, el_state()}.
 -spec terminate   (atom(),   el_state())        ->  ok.
 
@@ -137,11 +144,12 @@ terminate   (normal, _State)          -> ok.
 -type info_req() :: down() | timeout.
 
 -type from()     :: {pid(), reference()}.
--type call_req() :: any().
+-type call_req() :: get_status | any().
 
--spec handle_info(info_req(),         el_state()) -> {noreply,        el_state()}.
--spec handle_cast(cast_req(),         el_state()) -> {noreply,        el_state()}.
--spec handle_call(call_req(), from(), el_state()) -> {reply,   any(), el_state()}.
+-spec handle_info(info_req(),         el_state()) -> {noreply,                     el_state(), pos_integer()}.
+-spec handle_cast(cast_req(),         el_state()) -> {noreply,                     el_state(), pos_integer()}.
+-spec handle_call(call_req(), from(), el_state()) -> {reply, proplists:proplist(), el_state(), pos_integer()}
+                                                   | {reply, {ignored, any()},     el_state(), pos_integer()}.
 
 
 %%% Timeout polling is used to send a ':' on an active stream to keep it alive.
@@ -160,7 +168,7 @@ handle_info(Info, #el_state{} = State) ->
 %%% When a client connects, the Socket is saved in the gen_server.
 handle_cast ({new_client, Socket}, #el_state{stream_socket=undefined, start_stream=undefined} = State) -> start_stream(Socket, State);
 
-%%% Other events are sent using sse_out formatting.
+%%% Other events are sent using esse_out formatting.
 handle_cast ({send_data_only,               Data}, #el_state{} = State) -> send(State, esse_out:data_only    (           Data));
 handle_cast ({send_data_event,       Event, Data}, #el_state{} = State) -> send(State, esse_out:data_event   (    Event, Data));
 handle_cast ({send_object_event, Id, Event, Data}, #el_state{} = State) -> send(State, esse_out:object_event (Id, Event, Data));  
@@ -171,7 +179,11 @@ handle_cast (Msg, #el_state{} = State) ->
     noreply(State).
 
 
-%%% All synchronous requests are ignored.
+%%% Summary status can be obtained by session_id.
+handle_call (get_status, From, #el_state{} = State) ->
+    reply({status, format_state(State)}, State);
+
+%%% All other synchronous requests are ignored.
 handle_call (Request, From, #el_state{} = State) ->
     error_logger:warning_msg("Unexpected call ~p ignored from ~p~n", [Request, From]),
     reply({ignored, Request}, State).
