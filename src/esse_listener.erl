@@ -17,7 +17,11 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, send_data_only/2, send_data_event/3, send_object_event/4]).
+-export([start_link/1,
+         send_data_only/2, send_data_event/3, send_object_event/4,
+         get_pid_for_session/1
+        ]).
+
 
 %% Internally spawned functions
 -export([accept/2]).
@@ -26,7 +30,15 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
 
--type peername() :: {inet:ip_address(), inet:port_number()}.
+-type peername       () :: {inet:ip_address(), inet:port_number()}.
+-type session_id     () :: uuid:uuid().
+
+-record(session, {
+          id       :: session_id(),
+          pid      :: pid(),
+          peername :: peername()
+         }).
+          
 -record(el_state, {
           listen_socket                :: gen_tcp:socket(),
           num_bytes_sent = 0           :: pos_integer(),
@@ -35,7 +47,7 @@
           accepter_pid                 :: pid()            | undefined,
           accepter_mref                :: reference()      | undefined,
           peername       = undefined   :: peername()       | undefined,
-          session_id     = undefined   :: uuid:uuid()      | undefined,
+          session_id     = undefined   :: session_id()     | undefined,
           stream_socket  = undefined   :: gen_tcp:socket() | undefined,
           start_stream   = undefined   :: pos_integer()    | undefined,
           stop_stream    = undefined   :: pos_integer()    | undefined,
@@ -77,14 +89,28 @@ accept(Listen_Socket, Esse_Listener) ->
     end.
 
 
--spec send_data_only    (pid(),                                [sse_out:data()]) -> ok.
--spec send_data_event   (pid(),               sse_out:event(), [sse_out:data()]) -> ok.
--spec send_object_event (pid(), sse_out:id(), sse_out:event(), [sse_out:data()]) -> ok.
+-type active_id() :: pid() | session_id() | nonempty_string().
+-spec send_data_only    (active_id(),                                [sse_out:data()]) -> ok.
+-spec send_data_event   (active_id(),               sse_out:event(), [sse_out:data()]) -> ok.
+-spec send_object_event (active_id(), sse_out:id(), sse_out:event(), [sse_out:data()]) -> ok.
 
-send_data_only    (Pid,            Data) -> gen_server:cast(Pid, {send_data_only,               Data}).
-send_data_event   (Pid,     Event, Data) -> gen_server:cast(Pid, {send_data_event,       Event, Data}).
-send_object_event (Pid, Id, Event, Data) -> gen_server:cast(Pid, {send_object_event, Id, Event, Data}).
-    
+send_data_only(Pid, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_only, Data});
+send_data_only(Sid, Data)                  -> send_data_only(get_pid_for_session(Sid), Data).
+
+send_data_event(Pid, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_event, Event, Data});
+send_data_event(Sid, Event, Data)                  -> send_data_event(get_pid_for_session(Sid), Event, Data).
+
+send_object_event(Pid, Id, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_object_event, Id, Event, Data});
+send_object_event(Sid, Id, Event, Data)                  -> send_object_event(get_pid_for_session(Sid), Id, Event, Data).
+
+
+-spec get_pid_for_session(session_id() | nonempty_string()) -> pid().
+
+get_pid_for_session(Session_Id) when is_list(Session_Id) ->
+    get_pid_for_session(uuid:string_to_uuid(Session_Id));
+get_pid_for_session(Session_Id) when is_binary(Session_Id) ->
+    ets:lookup_element(esse_sessions, Session_Id, #session.pid).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -157,7 +183,7 @@ handle_call (Request, From, #el_state{} = State) ->
 -type run_state() :: normal | terminate.
 -type pdict()     :: [{any(), any()}].   % Key/Value process dictionary as a list
 -type status()    :: [{data, [{string(), proplists:proplist()}]}].
--spec format_status(status(), [pdict() | el_state()]) -> status().
+-spec format_status(run_state(), [pdict() | el_state()]) -> status().
 
 format_status(_Run_State, [PDict0, #el_state{} = State0]) ->
     PDict = format_pdict(PDict0),
@@ -217,7 +243,8 @@ start_stream(Socket, #el_state{} = State) ->
         #{} = Headers ->
             error_logger:info_msg("Got headers:~n~p~n", [Headers]),
             ok = gen_tcp:send(Socket, esse_out:response_headers(ok)),
-            ets:insert_new(esse_sessions, {Session_Id, self(), Peername}),
+            Session_Rec = #session{id=Session_Id, pid=self(), peername=Peername},
+            ets:insert_new(esse_sessions, Session_Rec),
             send(New_State, notify_session_id_event(Session_Id))
     end.
 
