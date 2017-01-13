@@ -53,8 +53,7 @@ terminate_child(Pid) ->
 %%% Send timeout is < 5 seconds to avoid gen_server crashing.
 listen_options() ->
     [binary, {packet, raw}, {active, false}, {reuseaddr, true},
-     {send_timeout, timer:seconds(3)}].
-
+     {send_timeout, esse_env:get_sse_send_timeout()}].
 listen(Port) ->
     {ok, Listen_Socket} = gen_tcp:listen(Port, listen_options()),
     Listen_Socket.

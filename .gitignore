@@ -4,6 +4,7 @@ ebin
 logs
 _rel
 relx
+xrefr
 *.d
 *.o
 *.beam

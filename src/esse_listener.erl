@@ -4,9 +4,17 @@
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
-%%%   Listener for SSE requests. Each gen_server instance is a single
-%%%   accept socket waiting for a client connection. When the connection
-%%%   ends, its supervisor will restart it as a new Listen Socket accepter.
+%%%   Listener for SSE client connect requests. Each gen_server instance
+%%%   monitors a single accept socket waiting for a client connection.
+%%%   When the connection ends, its supervisor will restart it as a new
+%%%   Listen Socket accepter.
+%%%
+%%%   A new connection is spawned using cxy_ctl limits, as a new esse_session.
+%%%   This ensures a static number of esse_listener instances determined at
+%%%   initialization, but a variable number of esse_stream instances without
+%%%   exceeding the maximum number of active sessions. If a connection is
+%%%   requested when the server is already running the maximum number of
+%%%   active connections, a 503 Service Unavailable response is sent.
 %%%
 %%% @since v0.1.0
 %%% @end
@@ -17,11 +25,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1,
-         send_data_only/2, send_data_event/3, send_object_event/4,
-         get_pid_for_session/1,
-         get_status/1
-        ]).
+-export([start_link/1, get_status/1]).
 
 
 %% Internally spawned functions
@@ -31,41 +35,14 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
 
--type peername       () :: {inet:ip_address(), inet:port_number()}.
--type session_id     () :: uuid:uuid().
-
--record(session, {
-          id       :: session_id(),
-          pid      :: pid(),
-          peername :: peername()
-         }).
-          
 -record(el_state, {
-          listen_socket                :: gen_tcp:socket(),
-          num_bytes_sent = 0           :: non_neg_integer(),
-          num_items_sent = 0           :: non_neg_integer(),
-          num_pings_sent = 0           :: non_neg_integer(),
-          accepter_pid                 :: pid()              | undefined,
-          accepter_mref                :: reference()        | undefined,
-          peername       = undefined   :: peername()         | undefined,
-          session_id     = undefined   :: session_id()       | undefined,
-          stream_socket  = undefined   :: gen_tcp:socket()   | undefined,
-          start_stream   = undefined   :: pos_integer()      | undefined,
-          stop_stream    = undefined   :: pos_integer()      | undefined,
-          start_listen   = timestamp() :: pos_integer()
+          listen_socket  :: gen_tcp:socket(),
+          accepter_pid   :: pid()             | undefined,
+          accepter_mref  :: reference()       | undefined,
+          start_listen   = esse_time:timestamp() :: pos_integer()
          }).
 
--type el_state() :: #el_state{}.
-
-%%% Timestamp for start_listen and start_stream
-timestamp() ->
-    erlang:system_time(microsecond).
-
-%%% Period at which ":" is sent to keep SSE stream active,
-%%% Perturbed randomly to avoid thundering herds of timeouts.
-keep_alive_time() ->
-%%    timer:seconds(5).
-    crypto:rand_uniform(timer:seconds(25), timer:seconds(35)).
+-type state() :: #el_state{}.
 
 
 %%%===================================================================
@@ -73,120 +50,85 @@ keep_alive_time() ->
 %%%===================================================================
 
 -spec start_link (gen_tcp:socket())        -> {ok, pid()}.
--spec accept     (gen_tcp:socket(), pid()) ->  ok | true.
+-spec accept     (gen_tcp:socket(), pid()) ->  ok | no_return().
 
+%%% Inherit shared Listen_Socket on each instance of listen worker.
 start_link(Listen_Socket) ->
     gen_server:start_link(?MODULE, {Listen_Socket}, []).
 
+%%% One accept per worker, spawn_monitor on accept to avoid blocking
+%%% TODO: Change to trap_exit and link, so if Listener down, accepters die.
 accept(Listen_Socket, Esse_Listener) ->
-    error_logger:info_msg("Starting to listen on socket ~p in ~p~n", [Listen_Socket, Esse_Listener]),
+    error_logger:info_msg("Starting to listen on socket ~p in ~p~n",
+                          [Listen_Socket, Esse_Listener]),
     case gen_tcp:accept(Listen_Socket) of
         {ok, Socket} ->
-            ok = gen_tcp:controlling_process(Socket, Esse_Listener),
-            ok = gen_server:cast(Esse_Listener, {new_client, Socket});
+            ok = maybe_launch_stream(Socket, Esse_Listener);
         {error, _Any} = Err ->
-            error_logger:error_report([{socket_error, {?MODULE, Esse_Listener}, Err}]),
+            Msg = [{socket_error, {?MODULE, Esse_Listener}, Err}],
+            error_logger:error_report(Msg),
             exit(Esse_Listener, normal)
     end.
 
 
--type active_id() :: pid() | session_id() | nonempty_string().
--spec send_data_only    (active_id(),                                  [esse_out:data()]) -> ok.
--spec send_data_event   (active_id(),                esse_out:event(), [esse_out:data()]) -> ok.
--spec send_object_event (active_id(), esse_out:id(), esse_out:event(), [esse_out:data()]) -> ok.
+%%% Report the internal status of the listener
+-spec get_status(pid()) -> proplists:proplist().
 
-send_data_only(Pid, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_only, Data});
-send_data_only(Sid, Data)                  -> send_data_only(get_pid_for_session(Sid), Data).
+get_status(Pid) ->
+    gen_server:call(Pid, get_status).
 
-send_data_event(Pid, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_event, Event, Data});
-send_data_event(Sid, Event, Data)                  -> send_data_event(get_pid_for_session(Sid), Event, Data).
-
-send_object_event(Pid, Id, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_object_event, Id, Event, Data});
-send_object_event(Sid, Id, Event, Data)                  -> send_object_event(get_pid_for_session(Sid), Id, Event, Data).
-
-
--spec get_pid_for_session(session_id() | nonempty_string()) -> pid().
-
-get_pid_for_session(Session_Id) when is_list(Session_Id) ->
-    get_pid_for_session(uuid:string_to_uuid(Session_Id));
-get_pid_for_session(Session_Id) when is_binary(Session_Id) ->
-    ets:lookup_element(esse_sessions, Session_Id, #session.pid).
-
-
--spec get_status(active_id()) -> proplists:proplist().
-
-get_status(Pid) when is_pid(Pid) -> gen_server:call(Pid, get_status);
-get_status(Sid)                  -> get_status(get_pid_for_session(Sid)).
-   
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init        ({gen_tcp:socket()})          -> {ok, el_state(), pos_integer()}.
--spec code_change (string(), el_state(), any()) -> {ok, el_state()}.
--spec terminate   (atom(),   el_state())        ->  ok.
+-spec init        ({gen_tcp:socket()})       -> {ok, state()}.
+-spec code_change (string(), state(), any()) -> {ok, state()}.
+-spec terminate   (atom(),   state())        ->  ok.
 
 init({Listen_Socket}) ->
     {Pid, Ref} = spawn_monitor(?MODULE, accept, [Listen_Socket, self()]),
-    {ok, #el_state{listen_socket=Listen_Socket, accepter_pid=Pid, accepter_mref=Ref}, keep_alive_time()}.
+    {ok, #el_state{listen_socket=Listen_Socket, accepter_pid=Pid, accepter_mref=Ref}}.
 
 code_change (_OldVsn, State, _Extra)  -> {ok, State}.
 terminate   ({error, closed}, _State) -> ok;
 terminate   (normal, _State)          -> ok.
               
 
-%%% All of handle_xxx end with reply/2 or noreply/1 to ensure keep_alive_time() always applies.
--type accept()   :: {accept, gen_tcp:socket()}.
--type cast_req() :: accept().
-
+%%% Handler functions
+-type from()     :: {pid(),  reference()}.
 -type down()     :: {'DOWN', reference(), process, pid(), normal | noconnection | noproc}.
--type info_req() :: down() | timeout.
 
--type from()     :: {pid(), reference()}.
--type call_req() :: get_status | any().
-
--spec handle_info(info_req(),         el_state()) -> {noreply,                     el_state(), pos_integer()}.
--spec handle_cast(cast_req(),         el_state()) -> {noreply,                     el_state(), pos_integer()}.
--spec handle_call(call_req(), from(), el_state()) -> {reply, proplists:proplist(), el_state(), pos_integer()}
-                                                   | {reply, {ignored, any()},     el_state(), pos_integer()}.
-
-
-%%% Timeout polling is used to send a ':' on an active stream to keep it alive.
-handle_info(timeout, #el_state{start_stream=undefined} = State) -> noreply    (State);
-handle_info(timeout,                       #el_state{} = State) -> keep_alive (State);  % Stops if TCP closed.
+-spec handle_info(down(),        state()) -> {noreply, state()}.
+-spec handle_cast(any(),         state()) -> {noreply, state()}.
+-spec handle_call(any(), from(), state())
+                 -> {reply, proplists:proplist(), state()}
+                  | {reply, {ignored, any()},     state()}.
 
 %%% Monitor 'DOWN' message arrives when the Socket Accepter terminates.
-handle_info({'DOWN', MRef, process, MPid, normal},  #el_state{} = State) -> noreply(accepter_down(MRef, MPid, State));
+handle_info({'DOWN', MRef, process, MPid, normal},  #el_state{} = State) ->
+    {noreply, accepter_down(MRef, MPid, State)};
 
 %%% Ignore all other info requests else.
 handle_info(Info, #el_state{} = State) ->
     error_logger:warning_msg("Unexpected info ~p ignored~n", [Info]),
-    noreply(State).
+    {noreply, State}.
 
 
-%%% When a client connects, the Socket is saved in the gen_server.
-handle_cast ({new_client, Socket}, #el_state{stream_socket=undefined, start_stream=undefined} = State) -> start_stream(Socket, State);
-
-%%% Other events are sent using esse_out formatting.
-handle_cast ({send_data_only,               Data}, #el_state{} = State) -> send(State, esse_out:data_only    (           Data));
-handle_cast ({send_data_event,       Event, Data}, #el_state{} = State) -> send(State, esse_out:data_event   (    Event, Data));
-handle_cast ({send_object_event, Id, Event, Data}, #el_state{} = State) -> send(State, esse_out:object_event (Id, Event, Data));  
-
-%%% Everything else is logged as unexpected.
+%%% Cast requests are logged as unexpected.
 handle_cast (Msg, #el_state{} = State) ->
     error_logger:warning_msg("Unexpected cast ~p~n", [Msg]),
-    noreply(State).
+    {noreply, State}.
 
 
 %%% Summary status can be obtained by session_id.
-handle_call (get_status, From, #el_state{} = State) ->
-    reply({status, format_state(State)}, State);
+handle_call (get_status, _From, #el_state{} = State) ->
+    {reply, {status, format_state(State)}, State};
 
 %%% All other synchronous requests are ignored.
 handle_call (Request, From, #el_state{} = State) ->
     error_logger:warning_msg("Unexpected call ~p ignored from ~p~n", [Request, From]),
-    reply({ignored, Request}, State).
+    {reply, {ignored, Request}, State}.
 
 
 %%%===================================================================
@@ -195,7 +137,7 @@ handle_call (Request, From, #el_state{} = State) ->
 -type run_state() :: normal | terminate.
 -type pdict()     :: [{any(), any()}].   % Key/Value process dictionary as a list
 -type status()    :: [{data, [{string(), proplists:proplist()}]}].
--spec format_status(run_state(), [pdict() | el_state()]) -> status().
+-spec format_status(run_state(), [pdict() | state()]) -> status().
 
 format_status(_Run_State, [PDict0, #el_state{} = State0]) ->
     PDict = format_pdict(PDict0),
@@ -208,126 +150,43 @@ format_pdict(PDict) ->
         Data -> [{"PDict", Data}]
     end.
 
-format_state(#el_state{listen_socket=LS, start_listen=SLS,   accepter_pid=AP, accepter_mref=AM,
-                       stream_socket=SS, start_stream=Start, stop_stream=Stop} = S) ->
-    [
-     {listen_socket,  format_listen_socket (LS, SLS, AP, AM)},
-     {stream_socket,  format_stream_socket (SS, Start, Stop)},
-     {session_id,     format_session_id    (S#el_state.session_id)},
-     {peername,       S#el_state.peername},
-     {num_bytes_sent, S#el_state.num_bytes_sent},  % Excluding pings
-     {num_items_sent, S#el_state.num_items_sent},  % Count of successful send/2 calls
-     {num_pings_sent, S#el_state.num_pings_sent}   % Assume 1 byte per ping
-    ].
+format_state(#el_state{listen_socket=LS, start_listen=SLS,
+                       accepter_pid=AP, accepter_mref=AM}) ->
+    [{listen_socket, format_listen_socket (LS, SLS, AP, AM)}].
 
-format_listen_socket(Socket, Start, undefined,  undefined)   -> {Socket, calendar_time(Start)};
-format_listen_socket(Socket, Start, Accept_Pid, Accept_Mref) -> {Socket, calendar_time(Start),
-                                                                 format_accepter(Accept_Pid, Accept_Mref)}.
+format_listen_socket(Socket, Start, undefined,  undefined)   ->
+    {Socket, esse_time:calendar_time(Start)};
+format_listen_socket(Socket, Start, Accept_Pid, Accept_Mref) ->
+    {Socket, esse_time:calendar_time(Start), format_accepter(Accept_Pid, Accept_Mref)}.
 
 format_accepter(Pid, Mref) -> {accepter, {Pid, Mref}}.
-
-format_stream_socket(undefined,     _,         _) -> none;
-format_stream_socket(Socket,    Start, undefined) -> {Socket, calendar_time(Start), "active"};
-format_stream_socket(Socket,    Start,      Stop) -> {Socket, calendar_time(Start), calendar_time(Stop)}.
-
-format_session_id(undefined) -> none;
-format_session_id(Sid)       -> uuid:uuid_to_string(Sid).
 
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
-%%% Save the socket, send the HTTP/1.1 stream headers, then return the new state.
-start_stream(Socket, #el_state{} = State) ->
-    Session_Id      = uuid:get_v4(),
-    {ok, Peername}  = inet:peername(Socket),
-    Start_Time      = timestamp(),
-    New_State = State#el_state{stream_socket=Socket,  start_stream=Start_Time,
-                               session_id=Session_Id, peername=Peername},
-    error_logger:info_msg("New session ~s connected to ~p from ~p at ~p",
-                          [format_session_id(Session_Id), self(),
-                           Peername, calendar_time(Start_Time)]),
-    case esse_user_agent:receive_request(Socket) of
-        {error, _Reason} = Err ->
-            error_logger:error_msg("Error receiving: ~p~n", [Err]),
-            noreply(State);
-        #{} = Headers ->
-            error_logger:info_msg("Got headers:~n~p~n", [Headers]),
-            ok = gen_tcp:send(Socket, esse_out:response_headers(ok)),
-            Session_Rec = #session{id=Session_Id, pid=self(), peername=Peername},
-            ets:insert_new(esse_sessions, Session_Rec),
-            send(New_State, notify_session_id_event(Session_Id))
+%%% Attempt to spawn a new stream, others server is too busy.
+maybe_launch_stream(Socket, Listener) ->
+    case cxy_ctl:maybe_execute_pid_link(esse_session, esse_session_sup, start_child, []) of
+        {max_pids, _Max}     -> unavailable(Socket, Listener);
+        Pid when is_pid(Pid) -> true = unlink(Pid),
+                                ok = gen_tcp:controlling_process(Socket, Pid),
+                                esse_session:new_client(Pid, Socket)
     end.
 
-notify_session_id_event(Session_Id) ->
-    esse_out:data_event(<<"new_session_id">>, [format_session_id(Session_Id)]).
-
-%%% Send a ':' on the socket stream, but stop if there is no client receiving or an error.
-keep_alive(#el_state{} = State) -> send(State, <<":">>).
-
-%%% Send an SSE event on the open Socket.
-send(#el_state{stream_socket=undefined} = State, _Sse_Data) -> noreply(State);
-send(#el_state{stream_socket=Socket}    = State,  Sse_Data) ->
-    case gen_tcp:send(Socket, Sse_Data) of
-        {error, timeout} -> close(Socket, timeout, State);
-        {error, Reason}  -> close(Socket, Reason,  State);
-        ok               -> noreply(accum_send_stats(Sse_Data, State))
+unavailable(Socket, Listener) ->
+    case gen_tcp:send(Socket, esse_out:response_headers(service_unavailable)) of
+        {error, timeout} -> close(Socket, timeout, Listener);
+        {error, Reason}  -> close(Socket, Reason,  Listener);
+        ok               -> ok
     end.
 
-accum_send_stats(<<":">>,  #el_state{num_pings_sent=NP} = State) ->
-    State#el_state{num_pings_sent=NP+1};
-accum_send_stats(Sse_Data, #el_state{num_items_sent=NI, num_bytes_sent=NB} = State) ->
-    State#el_state{num_items_sent=NI+1, num_bytes_sent=NB+iolist_size(Sse_Data)}.
-
-close(Socket, Reason, #el_state{session_id=Session_Id} = State0) ->
-    State = State0#el_state{stop_stream=timestamp()},
-    ets:delete(esse_sessions, Session_Id),
+close(Socket, _Reason, Listener) ->
     ok = gen_tcp:close(Socket),
-    error_logger:info_report([{termination_reason, Reason} | format_state(State)]),
-    Cleared_State = State#el_state{session_id=undefined, stream_socket=undefined, peername=undefined},
-    {stop, normal, Cleared_State}.
+    exit(Listener, normal).
 
 accepter_down(MRef, MPid, #el_state{accepter_mref=MRef, accepter_pid=MPid} = State) ->
     %% error_logger:info_msg("Accepter down ~p ~p", [MRef, MPid]),
     State#el_state{accepter_mref=undefined, accepter_pid=undefined}.
-
-reply   (Reply, New_State) -> {reply, Reply, New_State, keep_alive_time()}.
-noreply (       New_State) -> {noreply,      New_State, keep_alive_time()}.
-
-
-%%%===================================================================
-%%% Date hack copied from OTP docs and error_logger.
-%%%===================================================================
-
-%%% From erts erlang:timestamp/0 documentation
-calendar_time(undefined)   -> "unknown";
-calendar_time(System_Time) ->
-    MegaSecs  = System_Time div 1000000000000,
-    Secs      = System_Time div 1000000 - MegaSecs*1000000,
-    MicroSecs = System_Time rem 1000000,
-    Cal_Time  = calendar:now_to_universal_time({MegaSecs, Secs, MicroSecs}),
-    display_date(Cal_Time, MicroSecs).
-
-%%% From error_logger, but modified to RFC8601 (without using io:format)
-display_date({{Y,Mo,D},{H,Mi,S}}, Micros) ->
-    integer_to_list(Y) ++ "-" ++
-        two_digits(Mo) ++ "-" ++
-        two_digits(D)  ++ "T" ++
-        two_digits(H)  ++ ":" ++
-        two_digits(Mi) ++ ":" ++
-        two_digits(S)  ++ "." ++
-        six_digits(Micros) ++ "Z".
-
-two_digits(N) when 0 =< N, N =< 9 ->
-    [$0, $0 + N];
-two_digits(N) ->
-    integer_to_list(N).
-
-six_digits(N) when      0 =< N, N =<     9 -> [$0, $0, $0, $0, $0,         $0 + N ];
-six_digits(N) when     10 =< N, N =<    99 -> [$0, $0, $0, $0 | integer_to_list(N)];
-six_digits(N) when    100 =< N, N =<   999 -> [$0, $0, $0     | integer_to_list(N)];
-six_digits(N) when   1000 =< N, N =<  9999 -> [$0, $0         | integer_to_list(N)];
-six_digits(N) when  10000 =< N, N =< 99999 -> [$0             | integer_to_list(N)];
-six_digits(N)                              -> integer_to_list(N).
 

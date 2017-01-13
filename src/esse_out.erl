@@ -33,6 +33,7 @@
 
 -type response_type () ::  ok
                          | no_content
+                         | service_unavailable
                          | {temporary, binary()}
                          | {permanent, binary()}.
 
@@ -42,7 +43,8 @@
 response_headers(ok)                                   -> make_headers(<< "HTTP/1.1 200 OK">>);
 response_headers(no_content)                           -> make_headers(<< "HTTP/1.1 204 No Content">>);
 response_headers({temporary, URL}) when is_binary(URL) -> make_headers(<< "HTTP/1.1 307 Temporary Redirect">>, <<"Location: ", URL/binary>>);
-response_headers({permanent, URL}) when is_binary(URL) -> make_headers(<< "HTTP/1.1 308 Permanent Redirect">>, <<"Location: ", URL/binary>>).
+response_headers({permanent, URL}) when is_binary(URL) -> make_headers(<< "HTTP/1.1 308 Permanent Redirect">>, <<"Location: ", URL/binary>>);
+response_headers(service_unavailable)                  -> make_headers(<< "HTTP/1.1 503 Service Unavailable">>).
 
 make_headers(Status_Code) ->
     << Status_Code        /binary, ?CR, ?LF,

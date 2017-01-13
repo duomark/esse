@@ -4,7 +4,8 @@
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
-%%%   Owner of sse_sessions ets table.
+%%%   Owner of sse_sessions ets table, and initializer of epocxy
+%%%   cxy_ctl limits for accepters and listener sessions.
 %%%
 %%% @since v0.1.1
 %%% @end
@@ -15,7 +16,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -31,15 +32,15 @@
 %%% API
 %%%===================================================================
 
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, {}, []).
+start_link(Max_Sessions) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, {Max_Sessions}, []).
 
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init        ({})                       -> {ok, state()}.
+-spec init        ({non_neg_integer()})      -> {ok, state()}.
 -spec code_change (string(), state(), any()) -> {ok, state()}.
 -spec terminate   (atom(),   state())        ->  ok.
 
@@ -47,7 +48,16 @@ start_link() ->
 ets_options() ->
     [public, set, named_table, {keypos, 2}, {read_concurrency, true}].
 
-init({}) ->
+%%% Cap on number of active sessions sending SSE events.
+cxy_ctl_options(Max_Sessions) ->
+    Session_Startup_Stat_Count = 100,
+    Slow_Factor_Percentage     = 1000,
+    [
+     {esse_session, Max_Sessions, Session_Startup_Stat_Count, Slow_Factor_Percentage}
+    ].
+
+init({Max_Sessions}) ->
+    true = cxy_ctl:init(cxy_ctl_options(Max_Sessions)),
     esse_sessions = ets:new(esse_sessions, ets_options()),
     {ok, #esm_state{}}.
 
