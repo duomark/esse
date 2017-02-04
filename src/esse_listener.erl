@@ -27,10 +27,6 @@
 %% API
 -export([start_link/1, get_status/1]).
 
-
-%% Internally spawned functions
--export([accept/2]).
-
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
@@ -49,31 +45,14 @@
 %%% API
 %%%===================================================================
 
--spec start_link (gen_tcp:socket())        -> {ok, pid()}.
--spec accept     (gen_tcp:socket(), pid()) ->  ok | no_return().
+-spec start_link(gen_tcp:socket()) -> {ok, pid()}.
+-spec get_status(pid()) -> proplists:proplist().
 
 %%% Inherit shared Listen_Socket on each instance of listen worker.
 start_link(Listen_Socket) ->
     gen_server:start_link(?MODULE, {Listen_Socket}, []).
 
-%%% One accept per worker, spawn_monitor on accept to avoid blocking
-%%% TODO: Change to trap_exit and link, so if Listener down, accepters die.
-accept(Listen_Socket, Esse_Listener) ->
-    error_logger:info_msg("Starting to listen on socket ~p in ~p~n",
-                          [Listen_Socket, Esse_Listener]),
-    case gen_tcp:accept(Listen_Socket) of
-        {ok, Socket} ->
-            ok = maybe_launch_stream(Socket, Esse_Listener);
-        {error, _Any} = Err ->
-            Msg = [{socket_error, {?MODULE, Esse_Listener}, Err}],
-            error_logger:error_report(Msg),
-            exit(Esse_Listener, normal)
-    end.
-
-
-%%% Report the internal status of the listener
--spec get_status(pid()) -> proplists:proplist().
-
+%%% Report status of the Listner's internal state.
 get_status(Pid) ->
     gen_server:call(Pid, get_status).
 
@@ -86,18 +65,20 @@ get_status(Pid) ->
 -spec code_change (string(), state(), any()) -> {ok, state()}.
 -spec terminate   (atom(),   state())        ->  ok.
 
+%%% Spawn a single acceptor for each worker, waiting for client to connect.
 init({Listen_Socket}) ->
-    {Pid, Ref} = spawn_monitor(?MODULE, accept, [Listen_Socket, self()]),
+    {Pid, Ref} = spawn_monitor(esse_listen_accepter, accept, [Listen_Socket, self()]),
     {ok, #el_state{listen_socket=Listen_Socket, accepter_pid=Pid, accepter_mref=Ref}}.
 
 code_change (_OldVsn, State, _Extra)  -> {ok, State}.
-terminate   ({error, closed}, _State) -> ok;
-terminate   (normal, _State)          -> ok.
+terminate   ({error, closed}, _State) ->  ok;
+terminate   (normal, _State)          ->  ok.
               
 
 %%% Handler functions
 -type from()     :: {pid(),  reference()}.
--type down()     :: {'DOWN', reference(), process, pid(), normal | noconnection | noproc}.
+-type cause()    :: normal | noconnection | noproc | server_busy | session_transfer_timeout.
+-type down()     :: {'DOWN', reference(), process, pid(), cause()}.
 
 -spec handle_info(down(),        state()) -> {noreply, state()}.
 -spec handle_cast(any(),         state()) -> {noreply, state()}.
@@ -106,8 +87,10 @@ terminate   (normal, _State)          -> ok.
                   | {reply, {ignored, any()},     state()}.
 
 %%% Monitor 'DOWN' message arrives when the Socket Accepter terminates.
-handle_info({'DOWN', MRef, process, MPid, normal},  #el_state{} = State) ->
-    {noreply, accepter_down(MRef, MPid, State)};
+handle_info({'DOWN', MRef, process, MPid, Reason},  #el_state{} = State) ->
+    error_logger:info_msg("Accepter down ~p ~p for reason ~p", [MRef, MPid, Reason]),
+    New_State = State#el_state{accepter_mref=undefined, accepter_pid=undefined},
+    {stop, Reason, New_State};
 
 %%% Ignore all other info requests else.
 handle_info(Info, #el_state{} = State) ->
@@ -160,33 +143,3 @@ format_listen_socket(Socket, Start, Accept_Pid, Accept_Mref) ->
     {Socket, esse_time:calendar_time(Start), format_accepter(Accept_Pid, Accept_Mref)}.
 
 format_accepter(Pid, Mref) -> {accepter, {Pid, Mref}}.
-
-
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
-
-%%% Attempt to spawn a new stream, others server is too busy.
-maybe_launch_stream(Socket, Listener) ->
-    case cxy_ctl:maybe_execute_pid_link(esse_session, esse_session_sup, start_child, []) of
-        {max_pids, _Max}     -> unavailable(Socket, Listener);
-        Pid when is_pid(Pid) -> true = unlink(Pid),
-                                ok = gen_tcp:controlling_process(Socket, Pid),
-                                esse_session:new_client(Pid, Socket)
-    end.
-
-unavailable(Socket, Listener) ->
-    case gen_tcp:send(Socket, esse_out:response_headers(service_unavailable)) of
-        {error, timeout} -> close(Socket, timeout, Listener);
-        {error, Reason}  -> close(Socket, Reason,  Listener);
-        ok               -> ok
-    end.
-
-close(Socket, _Reason, Listener) ->
-    ok = gen_tcp:close(Socket),
-    exit(Listener, normal).
-
-accepter_down(MRef, MPid, #el_state{accepter_mref=MRef, accepter_pid=MPid} = State) ->
-    %% error_logger:info_msg("Accepter down ~p ~p", [MRef, MPid]),
-    State#el_state{accepter_mref=undefined, accepter_pid=undefined}.
-

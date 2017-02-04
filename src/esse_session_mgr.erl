@@ -33,7 +33,7 @@
 %%%===================================================================
 
 start_link(Max_Sessions) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, {Max_Sessions}, []).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, {}, []).
 
 
 %%%===================================================================
@@ -48,17 +48,10 @@ start_link(Max_Sessions) ->
 ets_options() ->
     [public, set, named_table, {keypos, 2}, {read_concurrency, true}].
 
-%%% Cap on number of active sessions sending SSE events.
-cxy_ctl_options(Max_Sessions) ->
-    Session_Startup_Stat_Count = 100,
-    Slow_Factor_Percentage     = 1000,
-    [
-     {esse_session, Max_Sessions, Session_Startup_Stat_Count, Slow_Factor_Percentage}
-    ].
-
-init({Max_Sessions}) ->
-    true = cxy_ctl:init(cxy_ctl_options(Max_Sessions)),
-    esse_sessions = ets:new(esse_sessions, ets_options()),
+init({}) ->
+    Tab_Name = esse_sessions,
+    Tab_Name = ets:new        (Tab_Name, ets_options()),
+    true     = ets:insert_new (Tab_Name, {active_sessions, active_sessions, 0}),
     {ok, #esm_state{}}.
 
 code_change (_OldVsn,  State, _Extra) -> {ok, State}.

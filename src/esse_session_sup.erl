@@ -21,7 +21,7 @@
 -behaviour(supervisor).
 
 %%% External API
--export([start_link/0, start_child/0, terminate_child/1]).
+-export([start_link/0, start_child/1, terminate_child/1]).
 
 %%% Internal API
 -export([init/1]).
@@ -32,14 +32,28 @@
 %%%===================================================================
 
 -spec start_link()           ->  supervisor:startchild_ret().
--spec start_child()          -> {ok, pid()}.
+-spec start_child(pid())     -> {ok, pid()}.
 -spec terminate_child(pid()) ->  ok.
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, {}).
     
-start_child() ->
-    supervisor:start_child(?MODULE, []).
+start_child(Listener) ->
+    Max_Sessions     = esse_env:get_max_sessions()+1,
+    Incr_Sessions_Op = {3, 1, Max_Sessions-1, Max_Sessions},
+    Active_Sessions = ets:update_counter(esse_sessions, active_sessions, Incr_Sessions_Op),
+    case Active_Sessions of
+        N when N < 0   -> {error, negative_active_sessions};
+        Max_Sessions   -> {error, server_busy};
+        _Less_Than_Max -> launch_child(Listener)
+    end.
+
+launch_child(Listener) ->
+    case supervisor:start_child(?MODULE, []) of
+        {error, _Reason}  = Err       -> Err;
+        {ok, Session_Pid} = Sup_Reply -> Listener ! {?MODULE, Session_Pid},
+                                         Sup_Reply
+    end.
 
 terminate_child(Pid) ->
     supervisor:terminate_child(?MODULE, Pid).
