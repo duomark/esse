@@ -60,9 +60,13 @@ maybe_launch_stream(Socket, Listener) ->
     case esse_session_sup:start_child(self()) of
         {error, server_busy} -> unavailable (Socket, Listener);
         {error, Other}       -> problem     (Socket, Listener, Other);
-        {ok, Session_Pid}    -> ok = transfer_socket_to_session_pid(Socket, Listener),
-                                Mref = erlang:monitor(process, Session_Pid),
-                                {ok, Session_Pid, Mref}
+        {ok, Session_Pid}    -> case transfer_socket_to_session_pid(Socket, Listener) of
+                                    session_transfer_timeout ->
+                                        no_stream;
+                                    ok ->
+                                        Mref = erlang:monitor(process, Session_Pid),
+                                        {ok, Session_Pid, Mref}
+                                end
     end.
 
 %%% Get the Session_Pid in a message from the execute_task call.
@@ -76,25 +80,19 @@ transfer_socket_to_session_pid(Socket, Listener) ->
     end.
 
 unavailable(Socket, Listener) ->
-    Info_Msg = "Server too busy for socket ~p and listener ~p",
-    error_logger:info_msg(Info_Msg, [Socket, Listener]),
-    notify_unavailable(Socket, Listener).
-
-problem(Socket, Listener, Other) ->
-    Info_Msg = "Server error ~p for socket ~p and listener ~p",
-    error_logger:info_msg(Info_Msg, [Other, Socket, Listener]),
-    notify_unavailable(Socket, Listener).
-
-notify_unavailable(Socket, Listener) ->
-    erlang:yield(),
-    case gen_tcp:send(Socket, esse_out:response_headers(service_unavailable)) of
+    Busy_Response = esse_out:response_headers(service_unavailable),
+    case gen_tcp:send(Socket, Busy_Response) of
         {error, timeout} -> close(Socket, timeout,     Listener);
         {error, Reason}  -> close(Socket, Reason,      Listener);
         ok               -> close(Socket, server_busy, Listener)
     end.
 
+problem(Socket, Listener, Other) ->
+    Msg = [{socket_error, {?MODULE, Listener}, {socket, Socket}, {error, Other}}],
+    error_logger:error_report(Msg),
+    unavailable(Socket, Listener).
+
 close(Socket, Reason, Listener) ->
-    erlang:yield(),
     ok = gen_tcp:close(Socket),
     exit(Listener, Reason),
     no_stream.

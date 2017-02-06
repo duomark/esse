@@ -16,7 +16,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1]).
+-export([start_link/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -32,7 +32,7 @@
 %%% API
 %%%===================================================================
 
-start_link(Max_Sessions) ->
+start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, {}, []).
 
 
@@ -40,7 +40,7 @@ start_link(Max_Sessions) ->
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init        ({non_neg_integer()})      -> {ok, state()}.
+-spec init        ({})                       -> {ok, state()}.
 -spec code_change (string(), state(), any()) -> {ok, state()}.
 -spec terminate   (atom(),   state())        ->  ok.
 

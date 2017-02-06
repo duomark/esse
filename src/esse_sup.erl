@@ -47,14 +47,13 @@ start_link() ->
 %%%===================================================================
 -spec init({}) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init({}) ->
-    Sse_Session_Mgr  = worker_child     (esse_session_mgr,  start_link, sse_session_args()),
-    Sse_Listener_Sup = supervisor_child (esse_listener_sup, start_link, sse_listener_args()),
+    Sse_Session_Mgr  = worker_child     (esse_session_mgr,  start_link, []),
     Sse_Session_Sup  = supervisor_child (esse_session_sup,  start_link, []),
+    Sse_Listener_Sup = supervisor_child (esse_listener_sup, start_link, sse_listener_args()),
 
     Children = [Sse_Session_Mgr, Sse_Session_Sup, Sse_Listener_Sup],
     {ok, {rest_for_one_sup_options(5,1), Children} }.
 
-sse_session_args  () -> [esse_env:get_max_sessions()].
 sse_listener_args () -> [esse_env:get_sse_port(), esse_env:get_max_accepters()].
 
 rest_for_one_sup_options(Intensity, Period) ->

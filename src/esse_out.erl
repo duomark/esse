@@ -40,20 +40,26 @@
 -spec response_headers(response_type()) -> sse_out().
 
 %%% Response headers are only modern HTTP/1.1 format.
-response_headers(ok)                                   -> make_headers(<< "HTTP/1.1 200 OK">>);
-response_headers(no_content)                           -> make_headers(<< "HTTP/1.1 204 No Content">>);
-response_headers({temporary, URL}) when is_binary(URL) -> make_headers(<< "HTTP/1.1 307 Temporary Redirect">>, <<"Location: ", URL/binary>>);
-response_headers({permanent, URL}) when is_binary(URL) -> make_headers(<< "HTTP/1.1 308 Permanent Redirect">>, <<"Location: ", URL/binary>>);
-response_headers(service_unavailable)                  -> make_headers(<< "HTTP/1.1 503 Service Unavailable">>).
+response_headers(ok)                                   -> make_headers       (<< "HTTP/1.1 200 OK" >>);
+response_headers(no_content)                           -> make_headers       (<< "HTTP/1.1 204 No Content" >>);
+response_headers({temporary, URL}) when is_binary(URL) -> make_headers       (<< "HTTP/1.1 307 Temporary Redirect" >>, << "Location: ", URL/binary >>);
+response_headers({permanent, URL}) when is_binary(URL) -> make_headers       (<< "HTTP/1.1 308 Permanent Redirect" >>, << "Location: ", URL/binary >>);
+response_headers(service_unavailable)                  -> make_headers_close (<< "HTTP/1.1 503 Service Unavailable" >>, <<>>).
 
 make_headers(Status_Code) ->
-    << Status_Code        /binary, ?CR, ?LF,
-       (common_headers()) /binary, ?CR, ?LF >>.
+    << Status_Code          /binary, ?CR, ?LF,
+       (common_headers())   /binary, ?CR, ?LF >>.
 
 make_headers(Status_Code, Extra) ->
-    << Status_Code        /binary, ?CR, ?LF,
-       Extra              /binary, ?CR, ?LF,
-       (common_headers()) /binary, ?CR, ?LF >>.
+    << Status_Code          /binary, ?CR, ?LF,
+       Extra                /binary, ?CR, ?LF,
+       (common_headers())   /binary, ?CR, ?LF >>.
+
+make_headers_close(Status_Code, Body) ->
+    << Status_Code          /binary, ?CR, ?LF,
+       (common_headers())   /binary,
+       "Connection: close",          ?CR, ?LF,
+       (make_content(Body)) /binary >>.
 
 common_headers() ->
     Date   = make_timestamp(),
@@ -67,7 +73,13 @@ get_version() ->
     list_to_binary(application:get_env(esse, version, "Dev")).
 
 make_timestamp() ->
-    <<"Thu, 29 Dec 2016 21:45:30 GMT">>.
+    list_to_binary(httpd_util:rfc1123_date()).
+
+make_content(Body) ->
+    Size = integer_to_binary(byte_size(Body)),
+    << "Content-Length: ", Size/binary, ?CR, ?LF,
+       ?CR, ?LF,
+       Body/binary >>.
 
 
 %%%===================================================================

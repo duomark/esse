@@ -31,8 +31,10 @@
 %%% API functions
 %%%===================================================================
 
+-type child_failure() :: negative_active_sessions | server_busy.
+
 -spec start_link()           ->  supervisor:startchild_ret().
--spec start_child(pid())     -> {ok, pid()}.
+-spec start_child(pid())     -> {ok, pid()} | {error, child_failure()}.
 -spec terminate_child(pid()) ->  ok.
 
 start_link() ->
@@ -41,7 +43,7 @@ start_link() ->
 start_child(Listener) ->
     Max_Sessions     = esse_env:get_max_sessions()+1,
     Incr_Sessions_Op = {3, 1, Max_Sessions-1, Max_Sessions},
-    Active_Sessions = ets:update_counter(esse_sessions, active_sessions, Incr_Sessions_Op),
+    Active_Sessions  = ets:update_counter(esse_sessions, active_sessions, Incr_Sessions_Op),
     case Active_Sessions of
         N when N < 0   -> {error, negative_active_sessions};
         Max_Sessions   -> {error, server_busy};
