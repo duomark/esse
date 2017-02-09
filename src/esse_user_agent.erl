@@ -14,22 +14,124 @@
 -author('Jay Nelson <jay@duomark.com>').
 
 %%% External API
--export([receive_request/1]).
+-export([
+         receive_packets/1,   % erlang:decode_packet/3
+         receive_request/1    % recv + functional parse
+        ]).
 
-%%% For testing
+%%% For testing functional parse
 -export([parse_request/1, example/1]).
 
 
 %%%===================================================================
-%%% External API
+%%% External API and support for erlang:decode_packet/3
+%%%===================================================================
+
+%%% Here are example returns from curl and Safari, respectively:
+
+%%% #{path => <<"/abc">>,
+%%%   <<"Host">> => <<"127.0.0.1:9997">>,
+%%%   <<"User-Agent">> => <<"curl/7.51.0">>}
+
+%%% #{path => <<"/">>,
+%%%   <<"Accept-Encoding">> => <<"gzip, deflate">>,
+%%%   <<"Accept-Language">> => <<"en-us">>,
+%%%   <<"Connection">> => <<"keep-alive">>,
+%%%   <<"DNT">> => <<"1">>,
+%%%   <<"Host">> => <<"localhost:9997">>,
+%%%   <<"Upgrade-Insecure-Requests">> => <<"1">>,
+%%%   <<"User-Agent">> => <<"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_3) AppleWebKit/602.4.8 (KHTML, like Gecko) Version/10.0.3 Safari/602.4.8">>}
+
+-define(MAX_HDR_SIZE, 2000).
+recv_timeout() -> timer:seconds(2).
+
+%%% Receives as much as it can from socket.
+receive_packets(Socket) ->
+    case get_socket_data(Socket, 0, 0) of
+        {error, _Reason} = Err1 -> Err1;
+        Bin_Request -> 
+            case parse_packets(Bin_Request, Socket) of
+                {error, _} = Err2 -> Err2;
+                Headers -> make_header_map(Headers)
+            end
+    end.
+
+make_header_map([{http_request, 'GET',    {_Type, Path_Str},  {1,1}}    | Headers]) ->
+    Hdr_Fields = [KV_Pair || {http_header, _Num, Hdr, _Extra, Val_Str} <- Headers,
+                             (KV_Pair = validate_header(Hdr, Val_Str)) =/= valid_accept],
+    case maps:from_list(Hdr_Fields) of
+        #{error := Value} -> {error, Value};
+        Map = #{}         -> Map#{path => list_to_binary(Path_Str)}
+    end;
+make_header_map([{http_request, 'GET',    {_Type, _Path_Str},  Version} | _Headers]) ->
+    {error, {'not_http_1.1', Version}};
+make_header_map([{http_request, Bad_Verb, {_Type, _Path_Str}, _Version} | _Headers]) ->
+    {error, {not_a_get_request, Bad_Verb}}.
+
+validate_header(Hdr, Val_Str)
+  when is_list(Hdr) ->
+    {list_to_binary(Hdr), list_to_binary(Val_Str)};
+validate_header('Accept', Val_Str) ->
+    valid_accept(list_to_binary(Val_Str));
+validate_header(Hdr, Val_Str) ->
+    {atom_to_binary(Hdr, utf8), list_to_binary(Val_Str)}.
+
+%%% In place recursion because of upper bound on size.
+parse_packets(Bin_Request, Socket) ->
+    case erlang:decode_packet(http, Bin_Request, []) of
+        {error,   _} = Err1  -> Err1;
+        {ok, http_eoh, <<>>} -> {error, no_request};
+        {more,       Length} -> 
+            case get_more(Socket, Bin_Request, Length) of
+                {error, _} = Err2     -> Err2;
+                << More_Bin/binary >> -> parse_packets(More_Bin, Socket)
+            end;
+        {ok, {http_request, _Method, _Path, _Version} = Req, Rest} ->
+            [Req | parse_headers(Rest, Socket)]
+    end.
+
+parse_headers({error, _} = Err, _Socket) -> [Err];
+parse_headers(Bin_Request, Socket) ->
+    case erlang:decode_packet(httph, Bin_Request, []) of
+        {error, _} = Err1    -> [Err1];
+        {ok, http_eoh, <<>>} -> [];
+        {more,       Length} ->
+            case get_more(Socket, Bin_Request, Length) of
+                {error, _} = Err2     -> [Err2];
+                << More_Bin/binary >> -> parse_headers(More_Bin, Socket)
+            end;
+        {ok, Packet, Rest} ->
+            [Packet | parse_headers(Rest, Socket)]
+    end.
+
+get_more(Socket, Bin_Request, More_Bytes) ->
+    case get_socket_data(Socket, byte_size(Bin_Request), More_Bytes) of
+        {error, _} = Err2     -> Err2;
+        << More_Bin/binary >> -> << Bin_Request/binary, More_Bin/binary >>
+    end.
+    
+get_socket_data(_Socket, Num_Bytes_Gotten, Num_Bytes_To_Get)
+  when Num_Bytes_Gotten + Num_Bytes_To_Get > ?MAX_HDR_SIZE ->
+    {error, client_sent_too_much_data};
+get_socket_data( Socket, Num_Bytes_Gotten, Num_Bytes_To_Get) ->
+    case gen_tcp:recv(Socket, Num_Bytes_To_Get, recv_timeout()) of
+        {error, _Reason} = Err ->
+            Err;
+        {ok, Bin_Request}
+          when Num_Bytes_Gotten =:= 0, byte_size(Bin_Request) >= ?MAX_HDR_SIZE ->
+            {error, client_sent_too_much_data};
+        {ok, Bin_Request} ->
+            Bin_Request
+    end.
+
+
+%%%===================================================================
+%%% Internal support functions
 %%%===================================================================
 
 -type client_request() :: any().
 -spec receive_request(gen_tcp:socket()) -> client_request().
 
--define(MAX_HDR_SIZE, 2000).
-recv_timeout() -> timer:seconds(2).
-     
 receive_request(Socket) ->
     case gen_tcp:recv(Socket, 0, recv_timeout()) of
         {error, _Reason} = Err ->
@@ -39,11 +141,6 @@ receive_request(Socket) ->
         {ok, Bin_Request} ->
             parse_request(Bin_Request)
     end.
-
-
-%%%===================================================================
-%%% Internal support functions
-%%%===================================================================
 
 crlf           () -> binary:compile_pattern(<<"\r\n">>).
 header_elems   () -> binary:compile_pattern(<<": ">>).
@@ -81,7 +178,7 @@ validate_headers([Hdr | Hdrs], Line, #{} = Header_Map) ->
         <<"Accept: ", Value/binary>> ->
             case valid_accept(Value) of
                 {error, Err} -> {error, {{header_line, Line-2}, Err}};
-                valid        -> validate_headers(Hdrs, Line-1, Header_Map)
+                valid_accept -> validate_headers(Hdrs, Line-1, Header_Map)
             end;
 
         %% No other headers are validated on explicit data values.
@@ -95,7 +192,7 @@ validate_headers([Hdr | Hdrs], Line, #{} = Header_Map) ->
 valid_accept(Accept) ->
     case accepts_text_event_stream(Accept) of
         false -> {error, must_accept_text_event_stream};
-        true  -> valid
+        true  -> valid_accept
     end.
 
 accepts_text_event_stream(<<"*/*">>)       -> true;
