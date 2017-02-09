@@ -1,0 +1,11 @@
+// a2x: --dblatex-opts "-P latex.output.revhistory=0 -P doc.publisher.show=0 -P index.numbered=0"
+// a2x: --xsltproc-opts "--stringparam use.id.as.filename 1"
+// a2x: -d book --attribute tabsize=4
+
+= Essential SSE (Esse) Library Guide
+Jay Nelson <jay@duomark.com>
+
+include::overview.asciidoc[overview]
+include::supervisor.asciidoc[supervisor-hierarchy]
+include::worker.asciidoc[esse-workers]
+include::api.asciidoc[function-api]

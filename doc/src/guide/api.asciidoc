@@ -1,0 +1,96 @@
+[[sse-function-api]]
+== SSE Function API
+
+The _esse_ library is designed to be embedded in a larger application. Internally, it sets up and manages an SSE service which accepts client connections and delivers streamed event data to those clients using the HTML5 SSE standard WHATWG spec (see <https://html.spec.whatwg.org/multipage/comms.html#server-sent-events>).
+
+The interactive page that is delivered is associated with a _session id_ which is unique to the new stream. Any interactions with that page that result in user requests will be sent via HTTP to a new port, handled internally by the server, and any results will be streamed back to the original SSE client channel using the _session id_ as the key to access the channel.
+
+=== Starting the Service
+
+The file _rel/sys.config_ contains the configuration information defining the SSE server parameters. The following parameters may be specified to be used as configuration data on startup of the server:
+
+|======
+|Parameter |Range |Description
+|max_acceptors |1+ |Number of Listen Socket acceptors
+|max_sessions |1+ |Maximum number of active SSE streams
+|sse_port |1-65535 |Port number to listen on
+|sse_send_timeout |1+ |Number of milliseconds for TCP send before timeout
+|======
+
+
+The _rel/sys.config_ file consists of a single _erlang_ list, with one _tuple_ per application. The _tuple_ contains only two elements: 1) an application name (_esse_ in the case of the SSE server); and 2) a proplist of parameter/value pairs. Here is an example configuration for an SSE service which could be contacted using _http://example.com:9997/_:
+
+-----------
+[
+  {esse,
+   [
+    { max_accepters,      10 },
+    { max_sessions,      100 },
+    { sse_port,         9997 },
+    { sse_send_timeout, 3000 }
+   ]
+  }
+].
+-----------
+
+To start the service, just include a call to the _esse_sup_ root supervisor from within your own application's supervisor hierarchy.
+
+*esse_sup:start_link()*
+
+Creates all processes necessary to accept client SSE requests on the port specified in the configuration using _sse_port_.
+
+=== Client Connection
+
+When a client connects to the SSE service, it will receive one of a few HTTP/1.1 responses:
+
+. 503 Service Unavailable
+. 307 Temporary Redirect
+. 308 Permanent Redirect
+. 200 OK
+
+The first is only issued if the server is currently handling the maximum number of active sessions as specified in the configuration. The redirect responses may be used when the clients have not been updated, but the server has been moved. The idea is that the client will follow the HTTP/1.1 standard of using the redirection address to seamlessly reconnect and receive the SSE stream even if it has been changed to originate from a different server source. The final successful response means that a live stream channel is now available to relay information to the client.
+
+The initial data relayed informs the client of reconnect frequency, and of the _session_id_ to be used for all requests if the results are to be relayed on this new live channel. The example below notifies the client to not reconnect more frequently than once every 30 seconds if it ever becomes disconnected, and it also provides the unique _session_id_:
+
+-------
+retry: 30000
+
+event: new_session_id
+data: 0f4689bc-a9b2-4277-be0e-ded2880a4c63
+
+-------
+
+This example demonstrates the SSE standard of ending an event with two linefeed characters. The client should record the _session_id_ and use it in any future requests.
+
+=== SSE Server Responses
+
+A future client request will task the HTTP side of the service to take some action which may involve long running services and a series of notifications to the client. The services and notifications are customized to the service being provided and make up the bulk of the SSE API calls that you will use.
+
+SSE server responses are invoked from the _esse_sessions_ module. All of the calls require a valid _session_id_.
+
+*esse_session:send_data_only(Sid, Data)*
+
+. _Sid_: string() session id for the active client
+. _Data_: iodata() to be sent to the client
+
+Results in a message event "data: _Data_\\n\\n" being sent to the corresponding client stream.
+
+
+*esse_session:send_data_event(Sid, Event, Data)*
+
+. _Sid_: string() session id for the active client
+. _Event_: binary() type of event to send
+. _Data_: iodata() to be sent to the client
+
+Results in a message event "event: _Event_\\ndata: _Data_\\n\\n" being sent to the corresponding client stream.
+
+
+*esse_session:send_seq_event(Sid, Seqno, Event, Data)*
+
+. _Sid_: string() session id for the active client
+. _Id_: binary() sequence number for replay/resume
+. _Event_: binary() type of event to send
+. _Data_: iodata() to be sent to the client
+
+Results in a message event "id: _Seqno_\nevent: _Event_\ndata: _Data_\\n\\n" being sent to the corresponding client stream.
+

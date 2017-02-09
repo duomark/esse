@@ -1,0 +1,51 @@
+[[supervisor-hierarchy]]
+== Supervisor Hierarchy
+
+The Esse library contains an application and a root supervisor. The application is only present to allow standalone testing. Normally you should use the root supervisor within your own supervisor hierarchy, ensuring that it is always present before code that calls on its services.
+
+The hierarchy is as follows:
+
+. *esse_sup* - root supervisor
+.. *esse_session_mgr* - gen_server owner of the esse_sessions ets table
+.. *esse_session_sup* - supervisor of all client session gen_server workers
+... *esse_session* - gen_server simple_one_for_one workers for each active client session
+.. *esse_listener_sup* - supervisor of all sockets waiting on client accept
+... *esse_listener* - gen_server simple_one_for_one workers sharing one Listen Socket
+
+The three children under the root supervisor are arranged in a _rest_for_one_ strategy so that earlier supervisors must be started before later ones, and if any early child crashes, all subsequently started children will immediately crash and get restarted in serial order.
+
+=== esse_sup
+
+_Esse_sup_ serves only as the root supervisor so that a functioning hierarchy can be included into another application. It starts the other _esse_ supervisors in serial order.
+
+=== esse_session_mgr
+
+_Esse_session_mgr_ is a _gen_server_ rather than a _supervisor_. It serves an important function as the owner of an ets table named *esse_sessions* which tracks all currently active sessions. This is a publicly writeable table for concurrency reasons. Each client session can record a _session id_ and _process id_ at the time of initialization without being bottlenecked by a _gen_server_. Any containing application should refrain from modifying any of the data in the _esse_sessions_ ets table. Public APIs provide the necessary manipulations of the data, however, it may prove beneficial to inspect the data in the table when debugging.
+
+The _session manager_ creates the _esse_sessions_ table inside the _gen_server:init/1_ function. The _gen_server_ performs no other action during its lifetime, to avoid crashing and losing the ets table. If the _session manager_ ever crashes or ends normally, the ets table will be deleted automatically by the runtime system.
+
+The table is initialized with the following ets attributes:
+
+. public - editable by any process
+. set - collisions on _session_id_ key should never happen
+. named_table
+. {keypos, 2}
+. {read_concurrency, true}
+
+The key position allows a defined record to be used for each active esse session. The record definition is not contained in this module. The table is read every time a message is relayed to a client, which should be orders of magnitude more frequent than updates.
+
+A single tuple is inserted to be used as an increment/decrement counter of active _esse sessions_. The format of the tuple is *{active_sessions, active_sessions, 0}* with the third element representing the current number of *active* _esse_sessions_. The label is repeated twice because the first occurrence indicates the record name, and the second occurrence is the indexed key to access the session count. Individual session records use a different record name, and are keyed on a unique _v4 uuid_ which is used as the canonical name for the _session id_.
+
+=== esse_session_sup
+
+The _simple_one_for_one_ session supervisor is initialized after the _session manager_. It defines its worker children as temporary workers (_i.e._, they will never be restarted) with each an instance of an _esse_session_ gen_server. It starts with no session workers. As clients connect, each will call _esse_session_sup:start_child/1_ to create a new worker instance.
+
+The only reason that the workers are being spawned from a supervisor is for easy cleanup of active processes if the server stops running, and to limit the number of live client sessions to avoid server overload. All live sessions are linked to the _esse_session_sup_ and can be automatically eliminated if the supervisor itself goes down. It is also possible to use the OTP diagnostic calls on _supervisor_ to gather information about all _active sessions_, or to broadcast or selectively distribute information to them.
+
+Whenever _esse_session_sup:start_child/1_ is called, the active session count is incremented in the _esse_sessions_ ets table. If there are already enough running, the call will fail with _{error, server_busy}_. When a client session ends, the count is decremented so that it accurately reflects the current number of live client sessions.
+
+=== esse_listener_sup
+
+The listener supervisor also uses _simple_one_for_one_ workers. These are permanent workers (_i.e._, they will always be restarted after failure or normal completion), with each worker an instance of an _esse_listener_ gen_server.
+
+When the supervisor initializes, it creates a single listen socket which is shared by all workers. Then it starts the number of acceptors specified by the configuration. For example, there might be 10 workers all concurrently accepting connections on a single listen socket. As soon as one accepts a client or has an unexpected error, it will terminate and get relaunched. On relaunch, it will start accepting clients anew using the same shared listen socket again. There should always be the same number of accepting processes barring a quick sudden spike of connections that causes a delay in their replacement.

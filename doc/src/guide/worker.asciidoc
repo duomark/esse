@@ -1,0 +1,50 @@
+[[esse-workers]]
+== Esse Workers
+
+The supervisor hierarchy enables two sets of workers to operate: 1) _esse_listener_; and 2) _esse_session_. Each of these two modules implements a _gen_server_.
+
+The modules which implement or support an _esse_listener_ are:
+
+. *esse_listener* - one worker per client connection acceptor
+. *esse_listen_acceptor* - blocked acceptor module waiting for a client connect
+. *esse_env* - determine configured _max_acceptors_, _max_sessions_
+
+The modules which implement or support an _esse_session_ are:
+
+. *esse_user_agent* - parses HTTP request headers
+. *esse_out* - formats SSE events as erlang binaries
+. *esse_env* - determine _sse_send_timeout_
+. *esse_time* - timestamp formatting for HTTP responses
+
+=== Client Connect Acceptors
+
+An _esse_listener_ instance initializes with a single argument of a _gen_tcp:listen/2_ socket. It spawns and monitors an _esse_listen_acceptor_ which blocks waiting for a client connection using _gen_tcp:accept/1_. The blocking call is executing in a separate process so that the _esse_listener_ can still be queried for status and state information using the OTP introspection API. If the blocked _acceptor_ fails, the _esse_listener_ instance will receive the _'DOWN'_ signal and can terminate itself so that it will restart with a fresh initialization to get a new process to accept client connects.
+
+The number of _esse_listener_ workers is limited to the max number of configured acceptors. Raising this number allows the server to handle more simultaneous connect attempts, but the ultimate limit on client sessions comes from the actions when a client connects. The _esse_listen_acceptor_ calls _esse_session_sup:start_child/1_ but a new process is only created if the active session count does not exceed the limit configured for the server.
+
+=== Client Sessions
+
+Client sessions are created when a client connects to an _esse_listen_acceptor_. The transfer of socket control is a bit involved, but it occurs as follows:
+
+. *esse_listener* creates a Listen Socket
+. *esse_listen_acceptor* receives a Client Connect Socket from the Listen Socket
+. *esse_session* is created by the _esse_listen_acceptor_
+.. *esse_session_sup* increments the active sessions count
+.. *esse_listen_acceptor* passes control of Client Connect Socket to new _esse_session_
+.. *esse_session* starts a new stream session
+... v4 _uuid_ is assigned to the client session as the _session id_
+... session state is marked with _timestamp_, _peer info_, and _session id_
+... HTTP request headers are parsed, verified, and placed in a map
+... _session pid_, _id_, and _peer info_ is inserted to the _esse_sessions_ ets table
+... _session id_ is sent as a new SSE event to the client via the session stream
+
+The key to all this activity is the separation of control, and ability to cleanly recover from failure, offered by using separate processes. The listen socket is supervised and restarts, causing the current acceptor to be replaced. If the acceptor crashes, or ends normally, the listen socket also restarts. These two work together to ensure all failures get reset to a known listening acceptor state, while at the same time allowing non-blocking queries of the listen socket status/state.
+
+The session is not created as a process unless the server has more capacity. The client will be informed with a _503 Service Unavailable_ if the server is over capacity. Otherwise, the new stream is encapsulated in a new process and the new client socket becomes owned by the session process. The _session id_ is then sent to the client so any client requests can be tagged to direct streamed results to the correct session stream.
+
+.First SSE transmission
+===========================================
+event: new_session_id
+data: 487f3e5f-6653-4e65-8f7f-d86ee222354a
+===========================================
+
