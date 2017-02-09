@@ -10,11 +10,11 @@
 {application, esse,
  [
   {description, "Essential Erlang Server Sent Event (SSE) Tools"},
-  {vsn,  "0.1.1"},
+  {vsn,  "0.2.0"},
   {mod,  {esse_app,   []}},
 
   {applications,          [kernel, stdlib]},
-  {included_applications, [jsone, uuid]},
+  {included_applications, [jsone, uuid, epocxy]},
 
   {registered,   [esse_sup]},
   {modules,      [

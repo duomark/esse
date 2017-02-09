@@ -4,7 +4,8 @@
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
-%%%   Owner of sse_sessions ets table.
+%%%   Owner of sse_sessions ets table, and initializer of epocxy
+%%%   cxy_ctl limits for accepters and listener sessions.
 %%%
 %%% @since v0.1.1
 %%% @end
@@ -43,11 +44,14 @@ start_link() ->
 -spec code_change (string(), state(), any()) -> {ok, state()}.
 -spec terminate   (atom(),   state())        ->  ok.
 
+%%% Publicly named table containing record instances.
 ets_options() ->
-    [public, set, named_table, {keypos, 1}, {read_concurrency, true}].
+    [public, set, named_table, {keypos, 2}, {read_concurrency, true}].
 
 init({}) ->
-    esse_sessions = ets:new(esse_sessions, ets_options()),
+    Tab_Name = esse_sessions,
+    Tab_Name = ets:new        (Tab_Name, ets_options()),
+    true     = ets:insert_new (Tab_Name, {active_sessions, active_sessions, 0}),
     {ok, #esm_state{}}.
 
 code_change (_OldVsn,  State, _Extra) -> {ok, State}.
