@@ -10,6 +10,7 @@ xrefr
 *.beam
 *.plt
 *~
+doc/src/guide/book.xml
 erl_crash.dump
 .erlang.mk
 .erlang.mk.packages.*

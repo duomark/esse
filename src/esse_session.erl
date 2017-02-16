@@ -15,13 +15,11 @@
 
 -behaviour(gen_server).
 
-%% API
--export([start_link/0, new_client/2,
-         send_data_only/2, send_data_event/3, send_object_event/4,
-         get_pid_for_session/1,
-         get_status/1
-        ]).
+%%% SSE relay to client external API
+-export([send_data_only/2, send_data_event/3, send_seq_event/4, send_retry_freq/2]).
 
+%% Internally exported API, not intended to be called by custom application
+-export([start_link/0, new_client/2, get_pid_for_session/1, get_status/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -57,6 +55,35 @@ keep_alive_time() ->
 
 
 %%%===================================================================
+%%% External relay to client API
+%%%===================================================================
+
+-type active_id() :: pid() | session_id() | nonempty_string().
+-spec send_data_only  (active_id(),                                  [esse_out:data()]) -> ok.
+-spec send_data_event (active_id(),                esse_out:event(), [esse_out:data()]) -> ok.
+-spec send_seq_event  (active_id(), esse_out:id(), esse_out:event(), [esse_out:data()]) -> ok.
+
+%%% Transmit default 'message' events using a list of data lines.
+send_data_only(Pid, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_only, Data});
+send_data_only(Sid, Data)                  -> send_data_only(get_pid_for_session(Sid), Data).
+
+%%% Transmit an event with a list of data lines.
+send_data_event(Pid, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_event, Event, Data});
+send_data_event(Sid, Event, Data)                  -> send_data_event(get_pid_for_session(Sid), Event, Data).
+
+%%% Transmit an event + data, with a unique identifier for the event.
+send_seq_event(Pid, Id, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_seq_event, Id, Event, Data});
+send_seq_event(Sid, Id, Event, Data)                  -> send_seq_event(get_pid_for_session(Sid), Id, Event, Data).
+
+
+%%% Tell client to change reconnect frequency.
+-spec send_retry_freq(active_id(), esse_out:millis()) -> ok.
+
+send_retry_freq(Pid, Millis) when is_pid(Pid) -> gen_server:cast(Pid, {send_retry_freq, Millis});
+send_retry_freq(Sid, Millis)                  -> send_retry_freq(get_pid_for_session(Sid), Millis).
+
+
+%%%===================================================================
 %%% API
 %%%===================================================================
 
@@ -68,25 +95,7 @@ start_link() ->
 
 new_client(Pid, Session_Socket) ->
     gen_server:cast(Pid, {new_client, Session_Socket}).
-
-%%% API for sending data to the attached client
--type active_id() :: pid() | session_id() | nonempty_string().
--spec send_data_only    (active_id(),                                  [esse_out:data()]) -> ok.
--spec send_data_event   (active_id(),                esse_out:event(), [esse_out:data()]) -> ok.
--spec send_object_event (active_id(), esse_out:id(), esse_out:event(), [esse_out:data()]) -> ok.
-
-%%% Transmit default 'message' events using a list of data lines.
-send_data_only(Pid, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_only, Data});
-send_data_only(Sid, Data)                  -> send_data_only(get_pid_for_session(Sid), Data).
-
-%%% Transmit an event with a list of data lines.
-send_data_event(Pid, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_data_event, Event, Data});
-send_data_event(Sid, Event, Data)                  -> send_data_event(get_pid_for_session(Sid), Event, Data).
-
-%%% Transmit an event + data, with a unique identifier for the event.
-send_object_event(Pid, Id, Event, Data) when is_pid(Pid) -> gen_server:cast(Pid,    {send_object_event, Id, Event, Data});
-send_object_event(Sid, Id, Event, Data)                  -> send_object_event(get_pid_for_session(Sid), Id, Event, Data).
-
+  
 
 %%% Find the corresponding client process channel for a given client session_id.
 -spec get_pid_for_session(session_id() | nonempty_string()) -> pid().
@@ -97,7 +106,7 @@ get_pid_for_session(Session_Id) when is_binary(Session_Id) ->
     ets:lookup_element(esse_sessions, Session_Id, #session.pid).
 
 
-%%% Report the internal status of the client connection worker.
+%%% Report the internal status of the client connection worker (for debugging).
 -spec get_status(active_id()) -> proplists:proplist().
 
 get_status(Pid) when is_pid(Pid) -> gen_server:call(Pid, get_status);
@@ -123,9 +132,10 @@ terminate   (normal, _State)          ->  ok.
               
 
 %%% All of handle_xxx end with reply/2 or noreply/1 to ensure keep_alive_time() always applies.
--type send_req()   :: {send_data_only,                        [binary()]}
-                    | {send_data_event,             binary(), [binary()]}
-                    | {send_object_event, binary(), binary(), [binary()]}.
+-type send_req()   :: {send_data_only,                      [binary()]}
+                    | {send_data_event,           binary(), [binary()]}
+                    | {send_seq_event,  binary(), binary(), [binary()]}
+                    | {send_retry_freq, esse_out:millis()}.
 -type new_client() :: {new_client, gen_tcp:socket()}.
 -type cast_req()   ::  new_client() | send_req().
 
@@ -154,9 +164,10 @@ handle_info(Info, #es_state{} = State) ->
 handle_cast ({new_client, Socket}, #es_state{stream_socket=undefined, start_stream=undefined}) -> start_stream(Socket);
 
 %%% Other events are sent using esse_out formatting.
-handle_cast ({send_data_only,               Data}, #es_state{} = State) -> send(State, esse_out:data_only    (           Data));
-handle_cast ({send_data_event,       Event, Data}, #es_state{} = State) -> send(State, esse_out:data_event   (    Event, Data));
-handle_cast ({send_object_event, Id, Event, Data}, #es_state{} = State) -> send(State, esse_out:object_event (Id, Event, Data));  
+handle_cast ({send_data_only,             Data}, #es_state{} = State) -> send(State, esse_out:data_only      (           Data));
+handle_cast ({send_data_event,     Event, Data}, #es_state{} = State) -> send(State, esse_out:data_event     (    Event, Data));
+handle_cast ({send_seq_event,  Id, Event, Data}, #es_state{} = State) -> send(State, esse_out:sequence_event (Id, Event, Data));  
+handle_cast ({send_retry_freq, Millis},          #es_state{} = State) -> send(State, esse_out:retry(Millis));
 
 %%% Everything else is logged as unexpected.
 handle_cast (Msg, #es_state{} = State) ->
@@ -238,7 +249,10 @@ start_stream(Socket) ->
     end.
 
 notify_session_id_event(Session_Id) ->
-    esse_out:data_event(<<"new_session_id">>, [format_session_id(Session_Id)]).
+    [
+     esse_out:retry(esse_env:get_retry_frequency()),
+     esse_out:data_event(<<"new_session_id">>, [format_session_id(Session_Id)])
+    ].
 
 %%% Send a ':' on the socket stream, but stop if there is no client receiving or an error.
 keep_alive(#es_state{} = State) -> send(State, <<":">>).

@@ -7,7 +7,7 @@
 %%%   Listener for SSE client connect requests. Each gen_server instance
 %%%   monitors a single accept socket waiting for a client connection.
 %%%   When the connection ends, its supervisor will restart it as a new
-%%%   Listen Socket accepter.
+%%%   Listen Socket acceptor.
 %%%
 %%%   A new connection is spawned using cxy_ctl limits, as a new esse_session.
 %%%   This ensures a static number of esse_listener instances determined at
@@ -33,8 +33,8 @@
 
 -record(el_state, {
           listen_socket  :: gen_tcp:socket(),
-          accepter_pid   :: pid()             | undefined,
-          accepter_mref  :: reference()       | undefined,
+          acceptor_pid   :: pid()             | undefined,
+          acceptor_mref  :: reference()       | undefined,
           start_listen   = esse_time:timestamp() :: pos_integer()
          }).
 
@@ -67,8 +67,8 @@ get_status(Pid) ->
 
 %%% Spawn a single acceptor for each worker, waiting for client to connect.
 init({Listen_Socket}) ->
-    {Pid, Ref} = spawn_monitor(esse_listen_accepter, accept, [Listen_Socket, self()]),
-    {ok, #el_state{listen_socket=Listen_Socket, accepter_pid=Pid, accepter_mref=Ref}}.
+    {Pid, Ref} = spawn_monitor(esse_listen_acceptor, accept, [Listen_Socket, self()]),
+    {ok, #el_state{listen_socket=Listen_Socket, acceptor_pid=Pid, acceptor_mref=Ref}}.
 
 code_change (_OldVsn, State, _Extra)  -> {ok, State}.
 terminate   ({error, closed}, _State) ->  ok;
@@ -86,10 +86,10 @@ terminate   (normal, _State)          ->  ok.
                  -> {reply, proplists:proplist(), state()}
                   | {reply, {ignored, any()},     state()}.
 
-%%% Monitor 'DOWN' message arrives when the Socket Accepter terminates.
+%%% Monitor 'DOWN' message arrives when the Socket Acceptor terminates.
 handle_info({'DOWN', MRef, process, MPid, Reason},  #el_state{} = State) ->
-    error_logger:info_msg("Accepter down ~p ~p for reason ~p", [MRef, MPid, Reason]),
-    New_State = State#el_state{accepter_mref=undefined, accepter_pid=undefined},
+    error_logger:info_msg("Acceptor down ~p ~p for reason ~p", [MRef, MPid, Reason]),
+    New_State = State#el_state{acceptor_mref=undefined, acceptor_pid=undefined},
     {stop, Reason, New_State};
 
 %%% Ignore all other info requests else.
@@ -134,12 +134,12 @@ format_pdict(PDict) ->
     end.
 
 format_state(#el_state{listen_socket=LS, start_listen=SLS,
-                       accepter_pid=AP, accepter_mref=AM}) ->
+                       acceptor_pid=AP, acceptor_mref=AM}) ->
     [{listen_socket, format_listen_socket (LS, SLS, AP, AM)}].
 
 format_listen_socket(Socket, Start, undefined,  undefined)   ->
     {Socket, esse_time:calendar_time(Start)};
 format_listen_socket(Socket, Start, Accept_Pid, Accept_Mref) ->
-    {Socket, esse_time:calendar_time(Start), format_accepter(Accept_Pid, Accept_Mref)}.
+    {Socket, esse_time:calendar_time(Start), format_acceptor(Accept_Pid, Accept_Mref)}.
 
-format_accepter(Pid, Mref) -> {accepter, {Pid, Mref}}.
+format_acceptor(Pid, Mref) -> {acceptor, {Pid, Mref}}.

@@ -1,0 +1,36 @@
+[[overview]]
+== Overview
+
+_Esse_ is a library which provides an SSE server implementation for streaming live data to a client. The server supports multiple simultaneous, independent client sessions. The goal is a simple, efficient implementation which does not rely on a full webserver such as _httpd_ or _cowboy_.
+
+When a client connects to an _esse_ server, a random v4 _uuid_ is assigned as a _session_id_. This id is associated with the live client stream for all future notifications. To send data to the proper client, your application must provide the _session_id_ in all calls.
+
+If the _esse_ server is overloaded, it will reply with a *503 Server Unavailable* HTTP/1.1 response.
+
+
+=== Versioning
+
+Version numbers follow _Major.Minor.Release_ format where _Major.Minor_ specifies the capabilities, and _.Release_ indicates whether you have a released version or a version which is under development. Only even numbered (e.g, _1.1.0_, _1.1.2_) versions are releases. If you find that you have an odd numbered version (e.g., _1.1.1_), you did not fetch dependencies based on a release tag and are using the master branch which has undergone modifications and is not consider stable for deployment. Please use only even-numbered, tagged releases.
+
+
+=== Building the Library
+
+_Esse_ uses _erlang.mk_ to build the software and documentation. From a raw installation use the following commands to build it the first time:
+
+. make
+. make dev
+
+The last command will start a shell with the _Esse_ server running. You can test it by using curl or a browser to visit _localhost:9997_.
+
+To generate the documentation manuals:
+
+. make docs (requires hand installation of aciidoc first)
+
+
+=== Including the Library
+
+The _Esse_ library can be tested standalone by building from the repository, or it can be included into another application. To include it properly:
+
+. Use _{included_applications, [esse]}_ in _your_app.app.src_
+. Call _esse_sup:start_link()_ from your supervisor hierarchy
+

@@ -13,12 +13,13 @@ PROJECT_DESCRIPTION = Essential Erlang Server Sent Events (SSE)
 HOST := `hostname`
 ROOT := $(shell pwd)
 
-# Set to always 4 spaces on generated code
+# Set to always use 4 spaces on generated code
 SP=4
 
-V = 0
+# Change to V=1 for verbose debugging
+V=0
 
-DEPS = eper jsone uuid epocxy
+DEPS = asciideck eper jsone uuid epocxy
 
 dep_jsone_commit = 1.4.0
 dep_uuid_commit  = v1.5.4
