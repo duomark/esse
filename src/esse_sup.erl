@@ -11,8 +11,8 @@
 %%%   The session manager creates and owns the 'esse_sessions' ets table,
 %%%   and initializes the epocxy cxy_ctl limits for number of active sessions.
 %%%
-%%%   The esse_listener_sup manages the listen socket and accepters waiting
-%%%   for client connections. The accepters are simple_one_for_one workers
+%%%   The esse_listener_sup manages the listen socket and acceptors waiting
+%%%   for client connections. The acceptors are simple_one_for_one workers
 %%%   sharing a single Listen Socket. They each launch a process which blocks
 %%%   until a client connects, creating a new active session if the limit on
 %%%   number of active sessions has not been exceeded. If the limit has been
@@ -54,7 +54,7 @@ init({}) ->
     Children = [Sse_Session_Mgr, Sse_Session_Sup, Sse_Listener_Sup],
     {ok, {rest_for_one_sup_options(5,1), Children} }.
 
-sse_listener_args () -> [esse_env:get_sse_port(), esse_env:get_max_accepters()].
+sse_listener_args () -> [esse_env:get_sse_port(), esse_env:get_max_acceptors()].
 
 rest_for_one_sup_options(Intensity, Period) ->
    #{

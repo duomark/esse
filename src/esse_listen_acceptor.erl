@@ -4,14 +4,14 @@
 %%% @reference The license is based on the template for Modified BSD from
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
-%%%   Accepter waiting for clients to connect to the Listen Socket.
-%%%   An esse_listener is monitoring the accepter, and will die and
-%%%   relaunch when the accepter goes down so that it can start a new
-%%%   Listen Socket accepter.
+%%%   Acceptor waiting for clients to connect to the Listen Socket.
+%%%   An esse_listener is monitoring the acceptor, and will die and
+%%%   relaunch when the acceptor goes down so that it can start a new
+%%%   Listen Socket acceptor.
 %%% @since v0.2.0
 %%% @end
 %%%------------------------------------------------------------------------------
--module(esse_listen_accepter).
+-module(esse_listen_acceptor).
 -author('Jay Nelson <jay@duomark.com>').
 
 -export([accept/2]).

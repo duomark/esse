@@ -10,7 +10,7 @@
 %%%   the start_child call. All children are temporary so they won't
 %%%   restart, because a new client request is required to start a
 %%%   replacement session (and that is handled by esse_listener using
-%%%   an accepter on the Listen Socket).
+%%%   an acceptor on the Listen Socket).
 %%%
 %%% @since v0.2.0
 %%% @end

@@ -5,7 +5,7 @@
 %%%   <a href="http://opensource.org/licenses/BSD-3-Clause">OSI</a>
 %%% @doc
 %%%   Owner of sse_sessions ets table, and initializer of epocxy
-%%%   cxy_ctl limits for accepters and listener sessions.
+%%%   cxy_ctl limits for acceptors and listener sessions.
 %%%
 %%% @since v0.1.1
 %%% @end
