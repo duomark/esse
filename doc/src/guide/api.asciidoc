@@ -1,5 +1,5 @@
 [[sse-function-api]]
-== SSE Function API
+== Esse Server Function API
 
 The _esse_ library is designed to be embedded in a larger application. Internally, it sets up and manages an SSE service which accepts client connections and delivers streamed event data to those clients using the HTML5 SSE standard WHATWG spec (see <https://html.spec.whatwg.org/multipage/comms.html#server-sent-events>).
 
@@ -9,6 +9,7 @@ The interactive page that is delivered is associated with a _session id_ which i
 
 The file _rel/sys.config_ contains the configuration information defining the SSE server parameters. The following parameters may be specified to be used as configuration data on startup of the server:
 
+[options="header"]
 |======
 |Parameter |Range |Description
 |max_acceptors |1+ |Number of Listen Socket acceptors
@@ -18,7 +19,12 @@ The file _rel/sys.config_ contains the configuration information defining the SS
 |======
 
 
-The _rel/sys.config_ file consists of a single _erlang_ list, with one _tuple_ per application. The _tuple_ contains only two elements: 1) an application name (_esse_ in the case of the SSE server); and 2) a proplist of parameter/value pairs. Here is an example configuration for an SSE service which could be contacted using _http://example.com:9997/_:
+The _rel/sys.config_ file consists of a single _erlang_ list, with one _tuple_ per application. The _tuple_ contains only two elements:
+
+. an application name (_esse_ in the case of the SSE server)
+. a proplist of parameter/value pairs
+
+Here is an example configuration for an SSE service which could be contacted using _http://example.com:9997/_:
 
 -----------
 [
@@ -70,27 +76,27 @@ SSE server responses are invoked from the _esse_sessions_ module. All of the cal
 
 *esse_session:send_data_only(Sid, Data)*
 
-. _Sid_: string() session id for the active client
-. _Data_: iodata() to be sent to the client
+. *Sid*: _string()_ session id for the active client
+. *Data*: _iodata()_ to be sent to the client
 
-Results in a message event "data: _Data_\\n\\n" being sent to the corresponding client stream.
+Results in a message event of "data: _Data_\n\n" being sent to the corresponding client stream.
 
 
 *esse_session:send_data_event(Sid, Event, Data)*
 
-. _Sid_: string() session id for the active client
-. _Event_: binary() type of event to send
-. _Data_: iodata() to be sent to the client
+. *Sid*: _string()_ session id for the active client
+. *Event*: _binary()_ type of event to send
+. *Data*: _iodata()_ to be sent to the client
 
-Results in a message event "event: _Event_\\ndata: _Data_\\n\\n" being sent to the corresponding client stream.
+Results in a typed event of "event: _Event_\ndata: _Data_\n\n" being sent to the corresponding client stream.
 
 
 *esse_session:send_seq_event(Sid, Seqno, Event, Data)*
 
-. _Sid_: string() session id for the active client
-. _Id_: binary() sequence number for replay/resume
-. _Event_: binary() type of event to send
-. _Data_: iodata() to be sent to the client
+. *Sid*: _string()_ session id for the active client
+. *Id*: _binary()_ sequence number for replay/resume
+. *Event*: _binary()_ type of event to send
+. *Data*: _iodata()_ to be sent to the client
 
-Results in a message event "id: _Seqno_\nevent: _Event_\ndata: _Data_\\n\\n" being sent to the corresponding client stream.
+Results in a typed event with reply id of "id: _Seqno_\nevent: _Event_\ndata: _Data_\n\n" being sent to the corresponding client stream.
 

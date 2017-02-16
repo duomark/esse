@@ -1,7 +1,7 @@
 [[supervisor-hierarchy]]
 == Supervisor Hierarchy
 
-The Esse library contains an application and a root supervisor. The application is only present to allow standalone testing. Normally you should use the root supervisor within your own supervisor hierarchy, ensuring that it is always present before code that calls on its services.
+The _Esse_ library contains an application and a root supervisor. The application is only present to allow standalone testing. Normally you should use the root supervisor within your own supervisor hierarchy, ensuring that it is always present before code that calls on its services.
 
 The hierarchy is as follows:
 
