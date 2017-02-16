@@ -10,7 +10,7 @@
 {application, esse,
  [
   {description, "Essential Erlang Server Sent Event (SSE) Tools"},
-  {vsn,  "0.2.0"},
+  {vsn,  "0.2.1"},
   {mod,  {esse_app,   []}},
 
   {applications,          [kernel, stdlib]},
